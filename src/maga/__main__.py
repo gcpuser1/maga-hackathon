@@ -23,6 +23,7 @@ def main() -> int:
     stages.add_parser("find", help="rank the repeated procedures in the stored entries")
     decide = stages.add_parser("decide", help="triage one candidate and ask for contract approval")
     decide.add_argument("candidate_id")
+    decide.add_argument("repo", type=Path, nargs="?", default=Path())
     build = stages.add_parser("build", help="generate tests, script, and skill from the contract")
     build.add_argument("candidate_id")
     check = stages.add_parser("check", help="Gate 1: acceptance tests in a container, no network")
@@ -58,7 +59,9 @@ def main() -> int:
         return _find()
     if stage in {"verify", "propose"}:
         return {"verify": _check, "propose": _propose}[stage](args.candidate_id, args.demo_repo)
-    return {"decide": _decide, "build": _build, "check": _check}[stage](args.candidate_id)
+    if stage == "decide":
+        return _decide(args.candidate_id, args.repo)
+    return {"build": _build, "check": _check}[stage](args.candidate_id)
 
 
 def _read(paths: list[Path]) -> int:
@@ -154,18 +157,21 @@ def _propose(candidate_id: str, demo_repo: Path) -> int:
     return 0
 
 
-def _decide(candidate_id: str) -> int:
+def _decide(candidate_id: str, repo: Path) -> int:
     path = STATE / "candidates" / f"{candidate_id}.json"
     if not path.exists():
         sys.stderr.write(f"no candidate at {path}; run `python -m maga find` first\n")
         return 2
     candidate = Candidate.model_validate_json(path.read_bytes())
     try:
-        decision = triage.decide(candidate, triage.existing_tools(Path.cwd(), Path.home()))
+        decision = triage.decide(candidate, triage.existing_tools(repo, Path.home()))
     except UserError as error:  # no API key: Pydantic AI names the variable it needs
         sys.stderr.write(f"{error}\n")
         return 1
-    sys.stdout.write(f"outcome: {decision.outcome}\nreason: {decision.reason}\n")
+    sys.stdout.write(
+        f"target repository: {repo.resolve()}\n"
+        f"outcome: {decision.outcome}\nreason: {decision.reason}\n"
+    )
     approved = False
     if decision.contract:
         sys.stdout.write(decision.contract.model_dump_json(indent=2) + "\n")
