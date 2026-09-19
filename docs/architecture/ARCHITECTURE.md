@@ -47,8 +47,10 @@ Aligned strictly with the team's specification:
    - **MAGA Repository (`ufs-lab/maga-hackathon`):** Houses the discovery agent, contract synthesizer, isolated validator, evaluation harness, and documentation.
    - **Demonstration Monorepo (Target):** The subject of observation where generated automation (`.agents/skills/`, helper scripts, and tests) is proposed and evaluated.
 4. **Local File & Artifact Storage (No SQLite in MVP):** Per team agreement, all state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`. Raw transcripts, credentials, and local tokens remain strictly outside committed Git source.
-5. **Execution Isolation vs. Workspace Separation:** Temporary directories or Git worktrees provide *clean filesystem checkouts*, not process or security containment. Generated code executed locally runs with the host user's full privileges. For true process sandboxing, ephemeral containerized execution (e.g. Modal) is used. When running locally, Gate 2 headless execution (`agy --dangerously-skip-permissions`) is explicitly constrained to the isolated demo directory with scrubbed environment credentials and restricted localhost network bounds.
-6. **Shared Bounded Revision Budget:** A strict combined limit across both Gate 1 (Script Validation) and Gate 2 (Agent Reuse) of `MAX_TOTAL_REVISIONS = 3`. If the budget is exhausted at either gate, the candidate transitions to `UNVERIFIED` and is not promoted to a PR.
+5. **Execution Isolation vs. Unconfined Developer Execution:** Temporary directories or Git worktrees provide *clean filesystem checkouts*, not process or security containment. Setting a working directory or `--add-dir` does NOT constitute an OS security boundary, nor does environment variable stripping prevent reading host credential files (`~/.ssh/`, `~/.config/gh/`, etc.). Therefore:
+   - For permission-disabled evaluation (`--dangerously-skip-permissions`), evaluation **must run in an actual isolated container or virtualized sandbox** (e.g. Modal) where host files and credentials do not exist.
+   - When running locally without containerization, execution is explicitly designated as **unconfined developer-host execution** running with the user's full privileges.
+6. **Shared Bounded Revision Budget with Fixed Acceptance Contract:** A strict combined limit across both Gate 1 (Script Validation) and Gate 2 (Agent Reuse) of `MAX_TOTAL_REVISIONS = 3`. If the budget is exhausted at either gate, the candidate transitions to `UNVERIFIED` and is not promoted to a PR. During repair, the **acceptance contract remains strictly fixed**; only the generated script implementation or skill prompt description may be revised. Modifying the contract itself invalidates prior triage and requires restarting the lifecycle.
 7. **Human Approval:** No automatic merging into upstream branches. The final product is a pull request containing code, skill, test suite, and execution trace evidence.
 
 ---
@@ -194,7 +196,7 @@ flowchart TD
         GATE1 -->|Fails Contract Checks| REV_CHECK{"Shared Revisions<br/>total < 3?"}
         GATE2 -->|Skill Ignored or Failed| REV_CHECK
         
-        REV_CHECK -->|Yes: budget remaining| REVISE["Increment Shared Revision Count<br/>Refine Contract / Skill / Script"]
+        REV_CHECK -->|Yes: budget remaining| REVISE["Increment Shared Revision Count<br/>Refine Script / Skill (Contract Remains Fixed)"]
         REVISE --> GEN
         REV_CHECK -->|No: budget exhausted| UNVERIFIED["Mark UNVERIFIED<br/>Halt: Do NOT Promote to PR"]
     end
@@ -216,7 +218,7 @@ The system implements the 6 components defined in the architecture specification
 | :--- | :--- | :--- | :--- | :--- |
 | **1. Transcript reader** | `maga.reader` | Reads selected local transcript files, normalizes entries, redacts sensitive keys/secrets, and tracks watermarks. Never executes commands from transcripts. | Raw `transcript_full.jsonl` | Anonymized `TranscriptEntry` records in `.maga/state/transcript_entries/` |
 | **2. Task finder** | `maga.finder` | Groups related entries into tasks, identifies recurring procedures across tasks, and separates observed facts from inferences. | `TranscriptEntry` records | `ProcedureCandidate` records in `.maga/state/candidates/` |
-| **3. Automation triage** | `maga.triage` | Assesses suitability against repository conventions; dispatches contract synthesis to the open-weight model on Modal via the Pydantic AI Gateway in Logfire. Validates output against Pydantic schema. | Candidates + existing scripts/skills | `AutomationContract` (Pydantic model) in `.maga/state/contracts/` |
+| **3. Automation triage** | `maga.triage` | Assesses suitability against repository conventions; dispatches contract synthesis to the open-weight model on Modal via the Pydantic AI Gateway in Logfire. Validates output against Pydantic schema and semantic completeness checks. | Candidates + existing scripts/skills | `AutomationContract` (Pydantic model) in `.maga/state/contracts/` |
 | **4. Package generator** | `maga.generator` | Generates candidate script, skill (`SKILL.md`), and unit tests into an isolated staging directory (`.maga/artifacts/staged/`). Keeps secrets out of code and docs. | Accepted `AutomationContract` | Staged package (`scripts/`, `SKILL.md`, `tests/`) |
 | **5. Verifier** | `maga.verifier` | Evaluates package against contract in disposable sandbox (Gate 1), and tests unprompted discovery by a fresh agent (Gate 2). Enforces a shared revision budget (`MAX_TOTAL_REVISIONS = 3`). Outputs `pass`, `fail`, or `inconclusive`. | Staged package + acceptance checks + clean testbed | `VerificationReport` (`pass`, `fail`, `inconclusive`) in `.maga/state/verification/` |
 | **6. Repository publisher** | `maga.publisher` | Generates proposal branch and human-reviewable PR/MR with read-back verification. A human decides whether to merge. | Verified package + maintainer approval | Git branch & GitHub Pull Request |
@@ -225,7 +227,11 @@ The system implements the 6 components defined in the architecture specification
 
 ## 6. Candidate State Machine & Bounded Revision Loop
 
-A critical architectural guarantee is that **both Gate 1 and Gate 2 share a single bounded revision budget** (`MAX_TOTAL_REVISIONS = 3`). If a package fails functional contract checks in Gate 1, or if a fresh agent in Gate 2 fails to discover or correctly execute the skill, a shared revision counter increments. If the combined revisions reach the limit, the pipeline transitions immediately to `UNVERIFIED` and permanently terminates without creating a pull request.
+A critical architectural guarantee is that **both Gate 1 and Gate 2 share a single bounded revision budget** (`MAX_TOTAL_REVISIONS = 3`), and **the acceptance contract remains strictly fixed during repair**:
+- If a package fails functional contract checks in Gate 1, or if a fresh agent in Gate 2 fails to discover or correctly execute the skill, a shared revision counter increments.
+- The repair loop refines only the **generated script implementation or skill prompt description**. It **never** weakens or refines the acceptance contract to make failing tests pass.
+- Modifying the contract itself invalidates the candidate and terminates the autonomous repair loop, requiring fresh human/triage review.
+- If the combined revisions reach the limit (`total_revisions >= 3`), the pipeline transitions immediately to `UNVERIFIED` and permanently terminates without creating a pull request.
 
 ```mermaid
 stateDiagram-v2
@@ -234,7 +240,7 @@ stateDiagram-v2
     
     TRIAGED --> REJECTED: Low repeatability / unbounded side effects / unsafe
     TRIAGED --> CLARIFICATION_REQUESTED: Unknown prerequisites / insufficient evidence
-    TRIAGED --> CONTRACTED: Preconditions & acceptance checks formalized
+    TRIAGED --> CONTRACTED: Preconditions & acceptance checks formalized (FIXED)
     
     CONTRACTED --> GENERATING: Package generator creates script, skill, tests
     GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in sandbox
@@ -247,7 +253,7 @@ stateDiagram-v2
     EVALUATING_REUSE --> REVISING: Gate 2 failure (total_revisions < 3)
     EVALUATING_REUSE --> UNVERIFIED: Gate 2 failure (total_revisions >= 3)
     
-    REVISING --> GENERATING: Self-correction prompt with failure logs (total_revisions += 1)
+    REVISING --> GENERATING: Self-correction prompt with failure logs (script/skill only; contract fixed)
     
     EVALUATING_REUSE --> PROPOSED: Gate 2 passed (unprompted discovery confirmed)
     
@@ -342,23 +348,25 @@ class VerificationRunRecord(BaseModel):
    - *Local Verification:* Fast, reproducible setup (< 5s install), zero external dependencies.
    - *Labeling:* Explicitly committed under `fixtures/demo-monorepo` and designated as a *constructed demonstration fixture* per hackathon requirements.
 
-### 8.2 Consistent Demonstration Scenario: Vite Strict Port Allocation & CORS Alignment
+### 8.2 Demonstration Scenarios: Vite Strict Port Allocation & CORS Alignment
 
-To avoid contradiction, the fixture defines **one consistent configuration** where the baseline reliably fails and the automated tool reliably succeeds:
+To avoid contradiction, the fixture defines **one consistent configuration** and evaluates **two distinct comparisons** (successful startup under contention vs. safe failure under exhaustion):
 
 * **Authoritative Configuration:**
   - `packages/config/ports.json` specifies permitted frontend ports: `[5173, 5174]`.
   - `apps/api/src/server.js` configures CORS whitelist strictly to: `["http://localhost:5173", "http://localhost:5174"]`.
   - Port `5175` and above are **strictly unpermitted** by the backend CORS policy.
 
-* **The Baseline Failure (Agent Without Skill):**
-  1. Both port `5173` and port `5174` are occupied (e.g. by dangling background test processes or stale services).
-  2. An unassisted coding agent is asked: *"Start the web frontend and verify that the backend accepts requests from it."*
-  3. The agent naively issues `npm run dev` in `apps/web`.
-  4. Vite detects that ports 5173 and 5174 are busy. Because standard Vite defaults to port-incrementing, it automatically increments to port **5175** and prints `Local: http://localhost:5175/`.
-  5. The agent assumes frontend startup succeeded. However, when it checks the backend with a browser request or origin check (`Origin: http://localhost:5175`), the backend rejects it with:  
-     `HTTP 403 Forbidden: CORS policy: Origin http://localhost:5175 is not permitted.`
-  6. The agent flounders across 4–6 turns: attempting ad-hoc restarts, killing random processes, or attempting to weaken backend CORS security rules.
+* **Comparison 1: One Permitted Port Available (Contention → Successful Startup):**
+  - **Setup:** Port `5173` is occupied by an external service; Port `5174` is free.
+  - **Baseline Agent (Without Skill):** Asked: *"Start the web frontend and verify that the backend accepts requests from it."* We observe its actual, unscripted trajectory: whether it starts on port 5174 with strict port binding, whether it verifies the backend CORS origin handshake, or whether it omits verification steps. We measure its actual turns, tool calls, elapsed time, and token usage rather than predetermining them.
+  - **Generated Automation (`scripts/start.sh` + skill):** Discovers 5173 is occupied, selects 5174, launches Vite with `--strictPort 5174`, verifies HTTP response, verifies backend health with `Origin: http://localhost:5174`, outputs structured JSON, and reliably completes the workflow.
+
+* **Comparison 2: All Permitted Ports Occupied (Exhaustion → Clean Failure):**
+  - **Setup:** Both port `5173` and port `5174` are occupied by active external services.
+  - **Baseline Agent (Without Skill):** Vite defaults to auto-incrementing and naively starts on unpermitted port **5175**. When the backend rejects requests with CORS failure (`HTTP 403 Forbidden: Origin http://localhost:5175 not permitted`), we measure how the unassisted agent responds—whether it attempts to stop unrelated external services, modify backend CORS rules in server files, or loop indefinitely.
+  - **Generated Automation (`scripts/start.sh` + skill):** Strictly respects configuration bounds. Detects both permitted ports (`5173`, `5174`) are occupied. Refuses to bind unpermitted port 5175. Refuses to alter backend CORS configuration or kill unrelated services. Immediately exits with a clean, structured non-zero error:  
+    `{"status": "error", "reason": "all_permitted_ports_exhausted", "tried": [5173, 5174]}`.
 
 * **The Synthesized Automation Contract:**
   1. **Inputs:** Target workspace (`apps/web`), permitted ports list (`[5173, 5174]`), backend health URL (`http://localhost:4000/api/health`).
@@ -366,9 +374,7 @@ To avoid contradiction, the fixture defines **one consistent configuration** whe
   3. **Permitted Changes:** May launch a single Vite process bound strictly to an available port in `[5173, 5174]`. May terminate stale un-responsive PIDs owned by the current workspace.
   4. **Postconditions:** Vite is actively serving on a permitted port (`5173` or `5174`). Backend health check passes with `Origin: http://localhost:<port>`. Emits structured JSON: `{"status": "ready", "port": 5174, "pid": 12345}`.
   5. **Rerun Behaviour (Idempotent):** If a healthy Vite instance is already running on a permitted port, reports healthy state without spawning duplicate processes.
-  6. **Failure Behaviour:** If *both* permitted ports are genuinely occupied by active external services, immediately halts with exit code 1 and structured error:  
-     `{"status": "error", "reason": "all_permitted_ports_exhausted", "tried": [5173, 5174]}`  
-     **Strict Invariant:** Never launch on unpermitted port 5175; never modify backend CORS configuration.
+  6. **Failure Behaviour:** If *both* permitted ports are occupied, immediately halts with exit code 1 and structured error without altering CORS or launching on unpermitted ports.
   7. **Acceptance Checks:** 
      - Case A (Clean): Port 5173 free -> binds 5173, passes origin check.
      - Case B (Contention): Port 5173 busy, 5174 free -> binds 5174 with `--strictPort`, passes origin check.
@@ -379,27 +385,26 @@ To avoid contradiction, the fixture defines **one consistent configuration** whe
 
 ## 9. Two-Gate Verification: Sandboxing & Execution Boundaries
 
-A key architectural distinction is that **temporary directories and Git worktrees do NOT provide process or security sandboxing**. A local subprocess running in a clean worktree still possesses full host user privileges. We define explicit execution boundaries for both gates:
+A key architectural distinction is that **temporary directories and Git worktrees provide clean workspace checkouts, NOT process or security sandboxing**. Neither setting a working directory nor passing `--add-dir` constitutes an OS security boundary; an agent with shell access can navigate up directories and inspect host paths. Similarly, stripping environment variables does not prevent reading on-disk credential files (`~/.ssh/`, `~/.config/gh/`, `~/.netrc`). We define explicit execution boundaries for both gates:
 
 ### 9.1 Gate 1: Script Execution Correctness
-* **Objective:** Verify that the synthesized script satisfies all 4 acceptance cases (clean, contention, exhaustion, idempotency) defined in the contract.
+* **Objective:** Verify that the synthesized script satisfies all 4 acceptance cases (clean, contention, exhaustion, idempotency) defined in the fixed contract.
 * **Modal Ephemeral Sandbox (Containerized):**
   - Validation tests execute inside a disposable Linux container (`modal.Function`) with pinned capabilities and an ephemeral filesystem.
   - The container has no access to host filesystem paths, host network interfaces, or ambient host API keys.
   - Test fixtures are copied into the container; disposable resources are automatically destroyed when the container terminates.
-* **Local Subprocess Fallback (Unconfined Workspace Isolation):**
+* **Local Subprocess Fallback (Unconfined Execution):**
   - When running locally without Modal, tests execute in a clean Git worktree under a dedicated temporary directory (`/tmp/maga_test_XXXXXX/`).
-  - **Explicit Boundary:** Local execution is explicitly designated as *unconfined*. To mitigate risks, the runner strips host secrets (`GH_TOKEN`, `ANTHROPIC_API_KEY`, etc.) from child process environments, binds strictly to `127.0.0.1`, and registers a POSIX signal trap (`EXIT INT TERM`) to kill all spawned child PIDs.
+  - **Explicit Boundary:** Local execution is explicitly recognized as **unconfined developer-host execution** running with the user's full privileges. Local cleanup traps (`EXIT INT TERM`) and localhost binding provide developer convenience and hygiene, not security isolation.
 
 ### 9.2 Gate 2: Autonomous Agent Discovery & Reuse
 * **Objective:** Prove that a fresh Antigravity session receives an ordinary, unprompted task description (e.g., *"Start the web frontend and verify backend connectivity"*) and autonomously discovers and executes the skill without being handed the script name.
 * **Execution Boundary for Headless `agy --dangerously-skip-permissions`:**
   - Running `agy` with permission checks disabled allows the agent to execute shell commands without user confirmation prompts.
-  - **Safety Boundaries Applied:**
-    1. **Working Directory Lockdown:** The `agy` process is invoked with `--add-dir` strictly limited to the clean demonstration worktree, preventing navigation to parent repositories.
-    2. **Environment Scrubbing:** Ambient developer tokens, SSH keys, and cloud credentials are removed from the execution environment.
-    3. **Deterministic Timeout:** A hard timeout (e.g. 90 seconds) terminates the agent if it enters an infinite loop or fails to select a tool.
-    4. **Discovery Assertion:** The verifier inspects the agent's transcript to confirm:
+  - **Required Execution Model:**
+    1. **Containerized Sandbox (Preferred):** To safely evaluate permission-disabled runs, `agy` **must run inside an actual isolated container or virtualized sandbox** (e.g. Modal or Docker) where host credentials and parent filesystems do not exist.
+    2. **Local Fallback (Unconfined Execution):** If executed on the developer host without containerization, permissions must either be retained (interactive confirmation) OR local execution must be explicitly documented and treated as **completely unconfined execution with host privileges**. Never claim directory confinement or security isolation from CLI flags.
+    3. **Discovery Assertion:** The verifier inspects the agent's transcript to confirm:
        - The agent inspected `.agents/skills/vite-dev-server/SKILL.md` via `view_file` based on description relevance.
        - The agent executed `scripts/start.sh` rather than ad-hoc bash trial-and-error.
 
@@ -426,14 +431,20 @@ A key architectural distinction is that **temporary directories and Git worktree
   Logfire Tracing (Captures baseline vs. optimized latency, tokens, and outputs)
       │
       ▼
-  maga.contract (Validates generated JSON against Pydantic AutomationContract schema)
+  maga.contract (Pydantic Schema Validation & Semantic Completeness Checks)
   ```
 
 * **Gateway Optimization Rule (Without Touching Agent Code):**
   - **Rule Name:** `Style: Terse Contract Synthesizer` (Action: `Transform`).
   - **Injected Instruction:** *"Emit strictly valid, minimal JSON adhering to the AutomationContract schema. Omit all conversational preamble, reasoning paragraphs, and sign-offs."*
   - **Experimental Target:** Target an experimental **40%–60% reduction in output tokens** compared to the unoptimized baseline run on the identical prompt and model.
-  - **Correctness Check:** Every output is parsed into the Pydantic `AutomationContract` model. If a terse output drops required fields or fails schema constraints, it is rejected — proving that token efficiency cannot compromise contract correctness.
+
+* **Schema Validation vs. Semantic & Behavioral Correctness:**
+  - **Pydantic schema validation verifies structural shape and field types; it does NOT prove contract correctness.** A minimal JSON response can contain every required field while omitting essential requirements inside those fields (e.g. dropping permitted port constraints, omitting CORS verification steps, or dropping the invariant against modifying CORS rules).
+  - To prove contract correctness:
+    1. **Semantic Completeness Evaluation:** Explicit assertions verify that essential domain requirements (permitted port bounds, CORS verification postconditions, refusal to weaken CORS, process cleanup) are present in the generated contract fields.
+    2. **Independent Acceptance Execution:** The downstream test suite generated from the contract is executed in Gate 1 against the independent acceptance test cases. If the contract was stripped of required constraints, the resulting implementation or test suite fails execution against the real fixture.
+    3. Token reduction is only considered successful if the resulting package passes all independent acceptance checks.
 
 * **Gateway Guardrail (Bonus Category):**
   - **Protection:** Ingress pattern targeting leaked secrets (`API_KEY=.*`, `Bearer .*`, `ghp_.*`).
