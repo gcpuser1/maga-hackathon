@@ -18,6 +18,12 @@ python -m maga check <candidate_id>   # CHECK, Gate 1: the tests in Docker with 
 python -m maga gate2 <candidate_id>   # CHECK, Gate 2: 5 fresh `claude -p` runs must find and use the skill
 ```
 
+Or run all of it with no question. Skills that pass Gate 1 appear below `<repo>/.claude/skills/`:
+
+```bash
+python -m maga auto [repo]            # READ, FIND, then DECIDE, BUILD, Gate 1, and install for the top 5 candidates
+```
+
 Each command exits 0 on a pass, 1 on a fail, and 2 on a usage error.
 All state is JSON under `.maga/`, which Git ignores. No transcript text enters this repository.
 
@@ -28,6 +34,7 @@ To try it with no private data, read the three synthetic sessions:
 
 - **Redaction before every model call.** `maga.reader.redact` runs when an entry is stored and again in `maga.llm.ask`. Pattern redaction is incomplete protection.
 - **Transcript text is data.** `maga.llm.ask` sends it inside `<data>` tags, and the instructions tell the model never to follow it.
+- **Unattended mode has no approval question.** `auto` installs a skill only after its package passes the gates, and its approval record says `approved_by: automatic`.
 - **A person approves the contract before BUILD.** `build` and `check` refuse unless the approval record holds the SHA-256 of the exact contract text.
 - **Independent tests.** Call A sees the contract and the harness description only. A revision repeats call B only, so the tests and the contract stay fixed.
 - **Gate 1 proves the suite first.** The suite must fail a no-op script and a script that skips the `Origin` check, in a container with no network, before it grades the generated script.

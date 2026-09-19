@@ -8,7 +8,7 @@ import sys
 import logfire
 from pydantic_ai.exceptions import UserError
 
-from maga import finder, gate2, generator, llm, publisher, reader, triage, verifier
+from maga import auto, finder, gate2, generator, llm, publisher, reader, triage, verifier
 from maga.schemas import Candidate, Package, Verdict
 
 STATE = Path(".maga/state")
@@ -33,6 +33,10 @@ def main() -> int:
     propose = stages.add_parser("propose", help="ask for package approval, then open the PR")
     propose.add_argument("candidate_id")
     propose.add_argument("demo_repo", type=Path, nargs="?", default=Path("fixtures/demo-monorepo"))
+    unattended = stages.add_parser(
+        "auto", help="read, find, then build and install with no question"
+    )
+    unattended.add_argument("repo", type=Path, nargs="?", default=Path())
     args = parser.parse_args()
 
     llm.load_env()
@@ -40,6 +44,14 @@ def main() -> int:
     logfire.configure(send_to_logfire="if-token-present", service_name="maga", console=False)
 
     stage: str = args.stage
+    if stage == "auto":
+        _read([])
+        _find()
+        installed = auto.Auto(STATE, STAGED, args.repo, [verifier.gate1_verdict]).run()
+        sys.stdout.write(
+            f"{len(installed)} skills installed below {args.repo / '.claude/skills'}\n"
+        )
+        return 0
     if stage == "read":
         return _read(args.paths)
     if stage == "find":
