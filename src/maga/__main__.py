@@ -7,8 +7,8 @@ import sys
 
 from pydantic_ai.exceptions import UserError
 
-from maga import finder, generator, reader, triage
-from maga.schemas import Candidate
+from maga import finder, generator, reader, triage, verifier
+from maga.schemas import Candidate, Package
 
 STATE = Path(".maga/state")
 STAGED = Path(".maga/artifacts/staged")
@@ -24,7 +24,12 @@ def main() -> int:
     decide.add_argument("candidate_id")
     build = stages.add_parser("build", help="generate tests, script, and skill from the contract")
     build.add_argument("candidate_id")
+    check = stages.add_parser("check", help="Gate 1: acceptance tests in a container, no network")
+    check.add_argument("candidate_id")
     args = parser.parse_args()
+
+    if args.stage == "check":
+        return _check(args.candidate_id)
 
     if args.stage == "build":
         return _build(args.candidate_id)
@@ -58,6 +63,32 @@ def _build(candidate_id: str) -> int:
         return 1
     sys.stdout.write(package.model_dump_json(indent=2, exclude={"contract"}) + "\n")
     return 0
+
+
+def _check(candidate_id: str) -> int:
+    staged = STAGED / candidate_id
+
+    def revise(gate_failure: str) -> Package:
+        # The approval is read again for each revision, so an edited contract ends the loop.
+        contract = generator.approved_contract(STATE, candidate_id)
+        return generator.write_script(contract, staged, gate_failure)
+
+    try:
+        package = Package(
+            candidate_id=candidate_id,
+            script_path=str(staged / "scripts" / "start.py"),
+            skill_path=str(staged / "SKILL.md"),
+            test_path=str(staged / "tests" / "test_start.py"),
+            contract=generator.approved_contract(STATE, candidate_id),
+        )
+        verdict = verifier.check(package, STATE, revise)
+    except (FileNotFoundError, PermissionError, UserError) as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
+    sys.stdout.write(verdict.model_dump_json(indent=2, exclude={"stdout_log"}) + "\n")
+    if verdict.outcome != "pass":
+        sys.stdout.write(verdict.stdout_log[-2000:] + "\n")
+    return 0 if verdict.outcome == "pass" else 1
 
 
 def _decide(candidate_id: str) -> int:

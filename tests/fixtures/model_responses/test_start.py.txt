@@ -1,0 +1,97 @@
+"""A recorded call A answer: the acceptance suite for the golden contract.
+
+It uses only the Gate 1 harness fixtures (`repo`, `backend`, `occupy`, `run`), as
+generator.CONSTRAINTS requires, and it never reads the script under test.
+"""
+
+from collections.abc import Callable
+import json
+import os
+from pathlib import Path
+import socket
+from subprocess import CompletedProcess
+from typing import Any
+
+Run = Callable[..., CompletedProcess[str]]
+Occupy = Callable[[int], socket.socket]
+
+
+def _listening(port: int) -> bool:
+    with socket.socket() as probe:
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _result(done: CompletedProcess[str]) -> dict[str, Any]:
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def test_case_a_clean_binds_5173_and_checks_the_origin(run: Run, backend: Any) -> None:
+    done = run()
+    result = _result(done)
+    assert done.returncode == 0
+    assert (result["status"], result["port"]) == ("ready", 5173)
+    assert _alive(result["pid"])
+    assert _listening(5173)
+    assert "http://localhost:5173" in backend.origins
+
+
+def test_case_b_contention_binds_5174_and_leaves_the_other_listener(
+    run: Run, backend: Any, occupy: Occupy
+) -> None:
+    unrelated = occupy(5173)
+    done = run()
+    assert done.returncode == 0
+    assert _result(done)["port"] == 5174
+    assert "http://localhost:5174" in backend.origins
+    assert unrelated.fileno() != -1
+    assert _listening(5173)
+
+
+def test_case_c_exhaustion_refuses_5175(run: Run, backend: Any, occupy: Occupy) -> None:
+    occupy(5173)
+    occupy(5174)
+    done = run()
+    result = _result(done)
+    assert done.returncode == 1
+    assert (result["status"], result["reason"]) == ("error", "all_permitted_ports_exhausted")
+    assert result["tried"] == [5173, 5174]
+    assert not any(_listening(port) for port in range(5175, 5180))
+    assert backend.origins == [] or all(o != "http://localhost:5175" for o in backend.origins)
+
+
+def test_case_d_idempotency_returns_the_same_pid(run: Run, backend: Any) -> None:
+    first, second = _result(run()), _result(run())
+    assert (second["status"], second["pid"], second["port"]) == ("ready", first["pid"], first["port"])
+    assert not _listening(5174)
+
+
+def test_a_rejected_origin_is_an_error_and_leaves_no_process(run: Run, backend: Any) -> None:
+    backend.allowed = []
+    done = run()
+    result = _result(done)
+    assert done.returncode == 1
+    assert (result["status"], result["reason"]) == ("error", "cors_origin_rejected")
+    assert not _listening(5173)
+
+
+def test_the_cors_allow_list_is_not_changed(run: Run, backend: Any, repo: Path) -> None:
+    server_js = repo / "apps/api/src/server.js"
+    before = server_js.read_bytes()
+    run()
+    assert server_js.read_bytes() == before
+
+
+def test_stop_ends_only_the_owned_process(run: Run, backend: Any, occupy: Occupy) -> None:
+    occupy(5173)
+    started = _result(run())
+    assert run("stop").returncode == 0
+    assert not _alive(started["pid"]) or not _listening(5174)
+    assert _listening(5173)
