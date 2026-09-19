@@ -165,6 +165,15 @@ agy --help
 logfire auth
 ```
 
+### When a command hangs or fails in an agent sandbox
+
+* Find the cause before you name it. A description such as "the sandbox blocks this" is a claim, and a claim needs a test.
+* Test the exact operation inside the sandbox first: `touch <path>` for a write, `curl -sI <url>` for the network.
+* Do not rerun a command outside the sandbox on a guess. If the test shows that the sandbox permits the operation, the sandbox is not the cause.
+* Look at the stuck process: `sample <pid> 1` on macOS, or `lsof -p <pid>`. A process that sits in `_dyld_start` has not started, so your code is not the cause either.
+* Put a time limit on each command that can stall.
+* After two stalls of the same command, stop. Do the work another way, and report the stall with the evidence.
+
 ---
 
 ## 5. Skill Sources & Attribution
