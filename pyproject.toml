@@ -12,6 +12,7 @@ description = "Mine coding-agent session transcripts for repeated work and turn 
 readme = "README.md"
 requires-python = ">=3.13.0,<3.14.0"
 dependencies = [
+    "logfire>=5.1.0",
     "pydantic>=2.13.5",
     "pydantic-ai-slim[google]>=2.46.0",
 ]

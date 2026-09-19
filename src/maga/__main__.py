@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 import sys
 
+import logfire
 from pydantic_ai.exceptions import UserError
 
-from maga import finder, gate2, generator, publisher, reader, triage, verifier
+from maga import finder, gate2, generator, llm, publisher, reader, triage, verifier
 from maga.schemas import Candidate, Package, Verdict
 
 STATE = Path(".maga/state")
@@ -33,6 +34,10 @@ def main() -> int:
     propose.add_argument("candidate_id")
     propose.add_argument("demo_repo", type=Path, nargs="?", default=Path("fixtures/demo-monorepo"))
     args = parser.parse_args()
+
+    llm.load_env()
+    # With no LOGFIRE_TOKEN, nothing leaves the machine.
+    logfire.configure(send_to_logfire="if-token-present", service_name="maga", console=False)
 
     stage: str = args.stage
     if stage == "read":
