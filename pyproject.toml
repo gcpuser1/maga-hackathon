@@ -11,7 +11,9 @@ version = "0.1.0"
 description = "Mine coding-agent session transcripts for repeated work and turn it into tested tools."
 readme = "README.md"
 requires-python = ">=3.13.0,<3.14.0"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.5",
+]
 
 [dependency-groups]
 dev = [
