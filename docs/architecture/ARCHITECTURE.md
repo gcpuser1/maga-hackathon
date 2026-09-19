@@ -13,7 +13,9 @@
 Coding agents repeatedly reconstruct the same project-specific procedures across sessions. This consumes developer time and model tokens. Required steps can be missed, even when documented. Successful sessions contain useful procedures; failed attempts reveal missing steps, wrong ports, and missing checks. MAGA mines both as evidence for reusable automation.
 
 > ### 📊 Empirical Evidence (Reported by Laurence)
-> Across **34 developer session transcripts**, we observed **185 Vite dev server launches** across **15+ distinct ports**. When Vite encountered occupied ports, it auto-incremented beyond permitted backend CORS whitelist boundaries (e.g. binding port 5175 when the backend only whitelisted 5173 and 5174), leading to silent frontend-backend disconnects and runtime `HTTP 403 Forbidden` CORS rejections.
+> Analysis across **34 developer session transcripts** revealed **185 Vite server launches** across **15+ distinct ports**, frequently leading to CORS origin failures when Vite auto-incremented to unpermitted ports.
+> 
+> *Demonstration Subject Alignment:* To provide a reproducible evaluation benchmark, we constructed `fixtures/demo-monorepo` with explicit port allocations (`[5173, 5174]`) and strict backend CORS whitelist enforcement, mirroring the real-world failure dynamics reported above.
 
 ### 1.2 Our Solution
 **MAGA** discovers repeated procedures across transcripts (`FIND`), triages suitability and formalizes an automation contract (`TRIAGE`), requires human approval of the contract and acceptance checks before generation, generates parameterized scripts and discoverable skills (`BUILD`), validates deterministic execution and unprompted agent reuse (`CHECK`), and publishes human-reviewable proposals (`SHIP`).
@@ -54,10 +56,10 @@ The architecture uses 5 standardized stage names across all modules and document
    - **MAGA Repository (`ufs-lab/maga-hackathon`):** Houses the discovery agent, contract synthesizer, isolated validator, evaluation harness, and documentation.
    - **Demonstration Monorepo (Target):** The subject of observation (`fixtures/demo-monorepo`) where generated automation is evaluated.
 6. **Local File & Artifact Storage (No SQLite in MVP):** All state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`.
-7. **Two-Gate Verification & Isolation Boundaries:**
-   - **Gate 1 (Execution Correctness):** Disposable sandbox with **zero external network access** (`--network none`) to prove the script runs deterministically offline.
-   - **Gate 2 (Autonomous Agent Reuse):** Disposable sandbox with **model API access only** (outbound HTTPS to Anthropic/Gemini/Modal endpoints only, with local loopback and repo credentials strictly inaccessible).
-   - *Local Fallback:* Recognized explicitly as unconfined developer host execution without security guarantees.
+7. **Two-Gate Verification & Enforceable Isolation Boundaries:**
+   - **Gate 1 (Execution Correctness):** Disposable sandbox container with **zero external network access** (`--network none`) to prove the script runs deterministically offline.
+   - **Gate 2 (Autonomous Agent Reuse):** Disposable sandbox container with **model API egress only** (outbound HTTPS to Anthropic/Gemini/Modal endpoints only) and **sandbox-local loopback permitted (`127.0.0.1` / `localhost`)** for probing local services, while host filesystem credentials and non-model external egress are strictly denied.
+   - *Local Fallback:* Local execution is unconfined developer-host execution and cannot formally satisfy the isolated CHECK gate.
 8. **Reuse Pass Rule (Repeatability Threshold):**
    - Tested across **5 fresh temporary worktree runs** with ordinary task prompts.
    - Threshold for passing Gate 2: **At least 4 successful runs out of 5** (80% repeatability) where the agent discovers the skill and solves the task in $\le 2$ turns without user intervention.
@@ -177,38 +179,42 @@ Progressive Disclosure:
 
 ```mermaid
 flowchart TD
-    subgraph S1["1. Ingestion & Preprocessing"]
+    subgraph S1["1. Ingestion & Preprocessing (FIND)"]
         T1["Claude Code Transcripts<br/>(~/.claude/projects/*/*.jsonl)"] --> ING["Transcript Reader & Redactor<br/>(maga.reader)"]
         T2["Antigravity Transcripts<br/>(~/.gemini/.../transcript_full.jsonl)"] --> ING
         ING --> DB[("Local JSON State Store<br/>(.maga/state/entries/)")]
     end
 
-    subgraph S2["2. Task Mining & Triage"]
+    subgraph S2["2. Task Mining & Suitability (FIND & TRIAGE)"]
         DB --> MINER["Procedure Finder<br/>(maga.finder)"]
-        MINER --> CLUST["Clustering, Normalization & Token Counter<br/>(Threshold >= 2 occurrences)"]
-        REPO_CONF["Existing Repo Tools<br/>(package.json, justfile, Makefile, .agents/skills/)"] --> TRIAGE["Automation Triage Engine<br/>(maga.triage)"]
+        MINER --> CLUST["Clustering, Normalization & Token Counter<br/>(Threshold >= 3 distinct sessions)"]
+        REPO_CONF["Existing Repo & User Tools<br/>(package.json, justfile, ~/.claude/skills/)"] --> TRIAGE["Automation Triage Engine<br/>(maga.triage)"]
         CLUST --> TRIAGE
     end
 
-    subgraph S3["3. Contract Formalization & Independent Synthesis"]
+    subgraph S3["3. Contract Formalization & Human Sign-off (TRIAGE)"]
         TRIAGE -->|Suitable Procedure| GW["Pydantic AI Gateway in Logfire<br/>(Optimization Rule & Ingress Guardrail)"]
         GW --> MODAL_LLM["Open-Weight Model on Modal GPU<br/>(e.g., Qwen-2.5-Coder-7B-Instruct)"]
-        MODAL_LLM --> CSYN["Contract Formalization & Validation<br/>(maga.schemas.AutomationContract)"]
+        MODAL_LLM --> CSYN["Contract Formalization & Validation<br/>(maga.schemas.Contract)"]
         
-        CSYN -->|Contract Only| TEST_GEN["Independent Test Synthesizer<br/>(Sees Contract only, NOT script)"]
-        CSYN -->|Contract + Context| SCRIPT_GEN["Script & Skill Synthesizer<br/>(maga.generator)"]
+        CSYN --> APPROVAL{"Human Sign-off on<br/>Contract & Acceptance Checks?"}
+        APPROVAL -->|Approved| APPROVED_CONTRACT["Approved Contract & Checks"]
+        APPROVAL -->|Rejected / Needs Edits| REVISE_CONTRACT["Refine Triage / Reject"]
         
         TRIAGE -->|Existing Tool Exists| SKILL_ONLY["Synthesize Skill Wrapper Only"]
         TRIAGE -->|Unbounded / Interactive| REJECT["Mark Unsupported / Agent-Led"]
     end
 
-    subgraph S4["4. Package Assembly & Two-Gate Verification"]
+    subgraph S4["4. Independent Generation & Bounded Verification (BUILD & CHECK)"]
+        APPROVED_CONTRACT -->|Contract Only| TEST_GEN["Independent Test Synthesizer<br/>(Sees Contract only, NOT script)"]
+        APPROVED_CONTRACT -->|Contract + Context| SCRIPT_GEN["Script & Skill Synthesizer<br/>(maga.generator)"]
+        
         TEST_GEN --> PKG["Staged Package<br/>(.maga/artifacts/staged/<id>/)"]
         SCRIPT_GEN --> PKG
         SKILL_ONLY --> PKG
         
-        PKG --> GATE1["Gate 1: Execution Correctness<br/>(Clean Subprocess Worktree, Zero External Network)"]
-        GATE1 -->|All Contract Assertions Pass| GATE2["Gate 2: Autonomous Agent Reuse Test<br/>(Headless agy/claude unprompted discovery <= 2 turns)"]
+        PKG --> GATE1["Gate 1: Execution Correctness<br/>(Disposable Sandbox, Zero External Network)"]
+        GATE1 -->|All Contract Assertions Pass| GATE2["Gate 2: Autonomous Agent Reuse Test<br/>(5 Fresh Runs, Model API Only, Pass >= 4/5)"]
         
         GATE1 -->|Fails Contract Checks| REV_CHECK{"Shared Revisions<br/>total < 3?"}
         GATE2 -->|Skill Ignored or Failed| REV_CHECK
@@ -218,7 +224,7 @@ flowchart TD
         REV_CHECK -->|No: budget exhausted| UNVERIFIED["Mark UNVERIFIED<br/>Halt: Do NOT Promote to PR"]
     end
 
-    subgraph S5["5. Proposal & Publication"]
+    subgraph S5["5. Proposal & Publication (SHIP)"]
         GATE2 -->|Skill Discovered & Executed Successfully| PR_BUILDER["Repository Publisher<br/>(maga.publisher)"]
         PR_BUILDER --> TARGET_PR["Target Monorepo PR<br/>(.agents/skills/ + scripts/ + tests/ + trace proof)"]
         TARGET_PR --> HUMAN_REV["Human Maintainer Review & Merge"]
@@ -234,7 +240,7 @@ The system implements the 6 core components defined in the architecture specific
 | Stage / Component | Python Module | Responsibility | Primary Inputs | Primary Outputs |
 | :--- | :--- | :--- | :--- | :--- |
 | **1. Ingest (`FIND`)** | `maga.reader` | Reads Claude Code (`~/.claude/projects/*/*.jsonl`) and Antigravity (`~/.gemini/.../transcript*.jsonl`) transcripts, normalizes steps into unified `Entry` objects, redacts sensitive tokens, and tracks incremental session watermarks. Never executes commands from transcripts. | Raw JSONL session logs | Normalized `Entry` records in `.maga/state/entries/` |
-| **2. Mine (`FIND`)** | `maga.finder` | Groups related entries into `Episode` objects, mines recurring command signatures and tool sequences with threshold **$\ge 3$ distinct sessions**, extracts error-and-fix sequences, detects user corrections with model validation, applies parameter normalization (ports, paths, hashes, timestamps), and produces `Candidate` and `Evidence` records. | `Entry` records | `Candidate` and `Evidence` records in `.maga/state/candidates/` |
+| **2. Mine (`FIND`)** | `maga.finder` | Groups related entries into `Episode` objects, mines recurring command signatures and tool sequences with threshold **$\ge 3$ distinct sessions**, extracts error-and-fix sequences, detects user corrections with model validation, applies parameter normalization (paths, ports, hashes, ticket IDs, PR numbers, timestamps), and produces `Candidate` and `Evidence` records. | `Entry` records | `Candidate` and `Evidence` records in `.maga/state/candidates/` |
 | **3. Triage (`TRIAGE`)** | `maga.triage` | Checks existing repo tools (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`) and user-level tools (`~/.claude/scripts/`, `~/.claude/skills/`) to avoid duplication. Dispatches contract synthesis to the Modal GPU open-weight model via Pydantic AI Gateway in Logfire. Presents `Contract` and acceptance checks for **human sign-off**. | Candidates + repo & user tool definitions | Human-approved `Contract` in `.maga/state/contracts/` |
 | **4. Generate (`BUILD`)** | `maga.generator` | Performs two independent generation steps: (1) Contract $\rightarrow$ Test generator (sees only contract, never script), and (2) Contract $\rightarrow$ Script & `SKILL.md` generator. Stages all files in `.maga/artifacts/staged/<candidate_id>/`. | Approved `Contract` | Staged `Package` (`scripts/`, `SKILL.md`, `tests/`) |
 | **5. Verify (`CHECK`)** | `maga.verifier` | Evaluates package against contract in zero-network isolation (Gate 1), and tests unprompted discovery across 5 fresh runs (Gate 2, pass $\ge 4/5$). Enforces shared revision budget (`MAX_TOTAL_REVISIONS = 3`). Outputs `Verdict`. | Staged `Package` + Acceptance checks | `Verdict` (`pass`, `fail`, `inconclusive`) in `.maga/state/verification/` |
@@ -243,8 +249,8 @@ The system implements the 6 core components defined in the architecture specific
 ### 5.1 Exact Mining & Extraction Rules (`FIND`)
 1. **Promising Candidate Threshold:**
    - A procedure is flagged as a candidate when the **identical normalised command sequence appears across $\ge 3$ distinct sessions**.
-2. **Error-and-Fix Sequence Detection:**
-   - A step with a non-zero exit code or stderr error pattern followed within $\le 3$ subsequent tool actions by a command modifying parameters/flags and exiting 0.
+2. **Error-and-Fix Sequence Matching:**
+   - A step with a non-zero exit code or stderr error trace followed within $\le 3$ subsequent tool actions by a successful step (exit 0) that **shares the same command shape/intent** (e.g. same CLI tool with altered flags, port bindings, or environment variables). Unrelated nearby successes are explicitly excluded from repair matching.
    - *Example:* `vite` (fails on occupied 5173) $\rightarrow$ `lsof -i :5173` $\rightarrow$ `vite --port 5174` (exits 0).
 3. **User Correction Extraction:**
    - When the user explicitly intervenes with a corrective instruction (e.g. *"no, use port 5174"*, *"don't kill that process"*, *"check CORS settings"*), MAGA flags the preceding agent step as a defect and uses the correction to formulate negative constraints and invariants in the contract.
@@ -252,7 +258,8 @@ The system implements the 6 core components defined in the architecture specific
 4. **Parameter Normalisation Rules:**
    - **File & Directory Paths:** Absolute paths (e.g. `/home/user/workspace/apps/web`) are normalized to relative repository tokens (e.g. `$REPO_ROOT/apps/web`).
    - **Port Numbers:** Specific port occurrences (`5173`, `5174`, `3000`, `4000`, `8080`) are extracted and converted to typed port list parameters (`$PORT_LIST`).
-   - **Ephemeral Tokens:** Timestamps, process IDs, git commit hashes, and UUIDs are abstracted into template parameters.
+   - **Issue & PR Identifiers:** Ticket IDs and PR references (`#123`, `MAGA-456`, `PR-789`) are normalized to `$ISSUE_OR_PR_ID`.
+   - **Ephemeral Tokens:** Timestamps, process IDs, git commit hashes, and UUIDs are abstracted into typed parameter placeholders.
 5. **Existing Tool Lookup Paths:**
    Before formalizing a new automation script, MAGA searches:
    - `package.json` (npm/pnpm/yarn scripts)
@@ -275,27 +282,30 @@ A critical architectural guarantee is that **both Gate 1 and Gate 2 share a sing
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DISCOVERED: Task finder detects recurring procedure
-    DISCOVERED --> TRIAGED: Automation triage evaluates candidate
+    [*] --> DISCOVERED: Task finder detects recurring procedure (>= 3 sessions)
+    DISCOVERED --> TRIAGED: Automation triage evaluates candidate & synthesizes Contract
     
     TRIAGED --> REJECTED: Low repeatability / unbounded side effects / unsafe
     TRIAGED --> CLARIFICATION_REQUESTED: Unknown prerequisites / insufficient evidence
-    TRIAGED --> CONTRACTED: Preconditions & acceptance checks formalized (FIXED)
+    TRIAGED --> CONTRACT_APPROVAL_PENDING: Contract & acceptance checks synthesized
     
-    CONTRACTED --> GENERATING: Package generator creates script, skill, tests (independent)
-    GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in clean subprocess
+    CONTRACT_APPROVAL_PENDING --> REJECTED: Human maintainer rejects candidate
+    CONTRACT_APPROVAL_PENDING --> CONTRACTED: Human explicitly signs off on Contract & checks (FIXED)
+    
+    CONTRACTED --> GENERATING: Independent synthesis: Test call (contract only) + Script call
+    GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in zero-network container
     
     VALIDATING --> REVISING: Gate 1 failure (total_revisions < 3)
     VALIDATING --> UNVERIFIED: Gate 1 failure (total_revisions >= 3 or inconclusive)
     
     VALIDATING --> EVALUATING_REUSE: Gate 1 passed (script functionally verified)
     
-    EVALUATING_REUSE --> REVISING: Gate 2 failure (total_revisions < 3)
+    EVALUATING_REUSE --> REVISING: Gate 2 failure (total_revisions < 3, < 4/5 runs passed)
     EVALUATING_REUSE --> UNVERIFIED: Gate 2 failure (total_revisions >= 3)
     
     REVISING --> GENERATING: Self-correction prompt with failure logs (script/skill only; contract fixed)
     
-    EVALUATING_REUSE --> PROPOSED: Gate 2 passed (unprompted discovery confirmed)
+    EVALUATING_REUSE --> PROPOSED: Gate 2 passed (>= 4/5 runs discovered skill in <= 2 turns)
     
     PROPOSED --> HUMAN_APPROVED: PR reviewed by human maintainer
     PROPOSED --> REJECTED: PR closed without merge
