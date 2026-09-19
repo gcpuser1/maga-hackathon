@@ -1,0 +1,7 @@
+{
+  "name": "demo-monorepo",
+  "private": true,
+  "scripts": {
+    "api": "node apps/api/src/server.js"
+  }
+}

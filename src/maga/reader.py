@@ -37,6 +37,8 @@ class _Line(BaseModel):
     uuid: str
     timestamp: datetime
     cwd: str | None = None
+    # The harness writes meta lines (a loaded skill body, a command caveat). No person typed them.
+    is_meta: bool = Field(default=False, alias="isMeta")
     message: _Message
 
 
@@ -79,12 +81,12 @@ def _result_text(content: object) -> str:
     return "\n".join(str(block.get("text", "")) for block in blocks)
 
 
-def _fields(kind: str, block: dict[str, Any]) -> dict[str, Any] | None:
+def _fields(kind: str, block: dict[str, Any], *, is_meta: bool) -> dict[str, Any] | None:
     """Map one content block to Entry fields. None for a block with no procedure evidence."""
     if block.get("type") == "text":
-        human = kind == "user"
+        human = kind == "user" and not is_meta
         return {
-            "source": "user" if human else "model",
+            "source": "user" if human else "system" if kind == "user" else "model",
             "entry_type": "user_input" if human else "generic_message",
             "content": _clip(str(block.get("text", ""))),
         }
@@ -137,7 +139,7 @@ def parse_session(path: Path) -> tuple[list[Entry], int]:
         blocks = [{"type": "text", "text": content}] if isinstance(content, str) else content
         first = True
         for block in blocks:
-            fields = _fields(kind, block)
+            fields = _fields(kind, block, is_meta=line.is_meta)
             if fields is None:
                 continue
             entry = Entry(

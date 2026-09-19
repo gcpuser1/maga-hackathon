@@ -83,6 +83,14 @@ def test_par_001_model_prose_is_a_generic_message(tmp_path: Path) -> None:
     assert (entry.source, entry.entry_type) == ("model", "generic_message")
 
 
+def test_a_meta_user_line_is_not_a_human_message(tmp_path: Path) -> None:
+    body = [{"type": "text", "text": "Base directory for this skill: /repo/.claude/skills/x"}]
+    lines = [_line(1, "user", "Start the web frontend."), _line(2, "user", body, isMeta=True)]
+    human, meta = parse_session(_write(tmp_path, [*lines]))[0]
+    assert (human.source, human.entry_type) == ("user", "user_input")
+    assert (meta.source, meta.entry_type) == ("system", "generic_message")
+
+
 def test_par_008_an_unknown_line_type_is_not_imported(tmp_path: Path) -> None:
     lines = [
         _line(n, kind, "BOOKKEEPING_MARKER_002") for n, kind in enumerate(["ai-title", "mode"])

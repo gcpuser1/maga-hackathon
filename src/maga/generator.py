@@ -47,7 +47,10 @@ _SCRIPT = (
     "Write the script and the SKILL.md for the contract in the data. "
     "SKILL.md starts with YAML front matter that has `name` and `description`; the description says "
     "when an agent must use the skill, and the body tells the agent to run the script and never "
-    "to start the tool directly. If the data has a `gate_failure`, repair the script or the skill. "
+    "to start the tool directly. Claude Code installs the skill at "
+    "`.claude/skills/<workflow_name>/`, so the command in SKILL.md is "
+    "`python .claude/skills/<workflow_name>/scripts/start.py`, run from the repository root. "
+    "If the data has a `gate_failure`, repair the script or the skill. "
     "The contract is fixed." + CONSTRAINTS
 )
 
