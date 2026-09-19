@@ -30,7 +30,7 @@ def _recorded(answer: dict[str, str], seen: list[str]) -> FunctionModel:
     return FunctionModel(respond)
 
 
-def test_ind_the_test_call_sees_the_contract_only_and_a_revision_keeps_the_tests(
+def test_ind_001_002_003_rev_006_the_test_call_sees_the_contract_only_and_a_revision_keeps_the_tests(
     tmp_path: Path,
 ) -> None:
     test_requests: list[str] = []
@@ -38,12 +38,16 @@ def test_ind_the_test_call_sees_the_contract_only_and_a_revision_keeps_the_tests
     script_model = _recorded(SCRIPT, script_requests)
     write_script(CONTRACT, tmp_path, model=script_model)  # the script exists before call A runs
     write_tests(
-        CONTRACT, tmp_path, _recorded({"test_code": "def test_a(): pass\n"}, test_requests)
+        CONTRACT,
+        tmp_path,
+        _recorded({"test_code": "def test_a(): pass  # TEST_MARKER\n"}, test_requests),
     )
     tests_before = (tmp_path / "tests" / "test_start.py").read_text()
     package = write_script(CONTRACT, tmp_path, "GATE_LOG: Case C failed", script_model)
 
-    assert len(test_requests) == 1
+    assert len(test_requests) == 1  # TT-IND-003: the tests stay fixed during repair
+    assert all(check in test_requests[0] for check in CONTRACT.acceptance_checks)  # TT-IND-001
+    assert not any("TEST_MARKER" in request for request in script_requests)  # TT-IND-002
     assert "Must NOT bind unpermitted ports" in test_requests[0]
     assert "SCRIPT_MARKER" not in test_requests[0]
     assert "GATE_LOG" not in test_requests[0]
