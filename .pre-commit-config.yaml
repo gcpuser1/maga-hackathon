@@ -1,0 +1,44 @@
+# Every hook calls a just recipe. Install with `just setup`.
+# Never skip a hook with --no-verify: fix the finding.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      - id: fix
+        name: Apply lint fixes and format (ruff)
+        entry: just fix
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+      - id: check
+        name: Gates (lock, format, lint, types, tests)
+        entry: just check
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+      - id: suppressions
+        name: Reject new suppression comments
+        entry: just suppressions
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+      - id: secrets-staged
+        name: Secret scan (gitleaks, staged)
+        entry: just secrets-staged
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
+      - id: conventional-commit
+        name: Conventional commit message
+        entry: uv run --locked conventional-pre-commit
+        language: system
+        stages: [commit-msg]
+      - id: preflight
+        name: Preflight (all tests and all linting, on HEAD)
+        entry: just preflight
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true

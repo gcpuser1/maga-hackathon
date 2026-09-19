@@ -1,0 +1,42 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+dist/
+build/
+*.egg-info/
+
+# MAGA local state and staged artifacts (see AGENTS.md, section 2)
+.maga/
+
+# Raw transcripts and local data never enter this public repository.
+# Synthetic fixtures are the only exception.
+transcripts/
+data/
+*.jsonl
+!tests/fixtures/**/*.jsonl
+!src/maga/fixtures/**/*.jsonl
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Test and tool output
+.coverage
+htmlcov/
+*.log
+
+# Demo fixtures with a Node workspace
+node_modules/
+
+# Agent-local settings
+.claude/settings.local.json
