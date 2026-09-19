@@ -3,20 +3,65 @@
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 
+from pydantic import ValidationError
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 import pytest
 
-from maga.generator import approved_contract, write_script, write_tests
+from maga.generator import SKILL_TEMPLATE, Script, approved_contract, write_script, write_tests
 from maga.schemas import Contract
 from maga.triage import GOLDEN
 
 CONTRACT = Contract.model_validate_json(GOLDEN)
 SKILL = (
-    "---\nname: vite-safe-dev-server\ndescription: Use to start the web frontend.\n---\nRun it.\n"
+    "---\n"
+    "name: vite-safe-dev-server\n"
+    "description: Use when the user wants to start the web frontend, run the dev server, start "
+    "Vite, check that the backend accepts requests, or fix a CORS or port problem. Never start "
+    "vite by hand.\n"
+    "---\n"
+    """
+## When to use
+
+- The user asks to start the web frontend, the dev server, or Vite.
+- The user asks whether the backend accepts requests from the frontend.
+
+## Run
+
+Run this exact command from the repository root.
+
+```bash
+python .claude/skills/vite-safe-dev-server/scripts/start.py
+```
+
+## Output
+
+The last line of stdout is one JSON object.
+
+- Ready: `{"status": "ready", "port": 5173, "pid": 4242}`. Tell the user the port.
+- Error: `{"status": "error", "reason": "precondition_failed"}`, with one of these reasons.
+  Report the reason to the user and stop. Never work around it.
+  - `all_permitted_ports_exhausted`: ports 5173 and 5174 are busy. Never pick another port.
+  - `cors_origin_rejected`: the backend refused the Origin. Never edit the CORS whitelist.
+  - `precondition_failed`: a precondition is absent. Never start the backend yourself.
+
+## Rules
+
+- Never bind a port outside 5173 and 5174.
+- Never modify the CORS whitelist in apps/api/src/server.js.
+- Never terminate an unrelated process.
+
+## Stop
+
+```bash
+python .claude/skills/vite-safe-dev-server/scripts/start.py stop
+```
+"""
 )
+RUN = "python .claude/skills/vite-safe-dev-server/scripts/start.py\n"
 SCRIPT = {"script": "print('SCRIPT_MARKER')\n", "skill_md": SKILL}
 
 
@@ -53,6 +98,8 @@ def test_ind_001_002_003_rev_006_the_test_call_sees_the_contract_only_and_a_revi
     assert "GATE_LOG" not in test_requests[0]
     assert "GATE_LOG: Case C failed" in script_requests[1]
     assert "GATE_LOG" not in script_requests[0]
+    assert SKILL_TEMPLATE in script_requests[0]
+    assert SKILL_TEMPLATE not in test_requests[0]
     assert (tmp_path / "tests" / "test_start.py").read_text() == tests_before
     assert Path(package.script_path).read_text() == SCRIPT["script"]
     assert Path(package.skill_path).read_text() == SKILL
@@ -60,16 +107,24 @@ def test_ind_001_002_003_rev_006_the_test_call_sees_the_contract_only_and_a_revi
 
 
 @pytest.mark.parametrize(
-    "answer",
+    ("answer", "fault"),
     [
-        {**SCRIPT, "script": "def broken(:\n"},
-        {**SCRIPT, "skill_md": "Run the script."},
-        {**SCRIPT, "skill_md": "---\nname: x\n---\nno description\n"},
+        ({**SCRIPT, "script": "def broken(:\n"}, "not Python"),
+        ({**SCRIPT, "skill_md": "Run the script."}, "lacks: name, description"),
+        ({**SCRIPT, "skill_md": "---\nname: x\n---\nno description\n"}, "lacks: description"),
+        ({**SCRIPT, "skill_md": SKILL.replace("name: vite-safe-dev-server\n", "")}, "lacks: name"),
+        ({**SCRIPT, "skill_md": SKILL.replace(": Use when", ": Starts Vite when")}, "must start"),
+        ({**SCRIPT, "skill_md": SKILL.replace("## Output", "## Result")}, "missing: ## Output"),
+        ({**SCRIPT, "skill_md": SKILL.replace("---\n\n", "---\n\n## Stop\n\n")}, "heading order"),
+        ({**SCRIPT, "skill_md": SKILL.replace(RUN, "python scripts/start.py\n")}, "`## Run`"),
+        ({**SCRIPT, "skill_md": SKILL_TEMPLATE}, "fill each placeholder"),
     ],
 )
 def test_a_script_answer_that_is_not_usable_is_refused(
-    tmp_path: Path, answer: dict[str, str]
+    tmp_path: Path, answer: dict[str, str], fault: str
 ) -> None:
+    with pytest.raises(ValidationError, match=re.escape(fault)):
+        Script.model_validate(answer)
     with pytest.raises(UnexpectedModelBehavior):
         write_script(CONTRACT, tmp_path, model=_recorded(answer, []))
     assert not (tmp_path / "scripts").exists()

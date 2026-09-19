@@ -7,6 +7,7 @@ Call B writes the script and the skill. A revision repeats call B only, so the t
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 
 from pydantic import BaseModel, field_validator
 from pydantic_ai.models import Model
@@ -43,15 +44,64 @@ _TESTS = (
     "A script that does nothing, and a script that skips a postcondition, must fail the module. "
     "Test the contract only, never an implementation detail." + CONSTRAINTS
 )
+# The shape of each generated SKILL.md. Script._follows_the_template refuses an answer without it.
+SKILL_TEMPLATE = """\
+---
+name: <workflow_name>
+description: Use when <user goals and trigger phrases>. Never <the manual action to avoid>.
+---
+
+## When to use
+
+<One line for each situation in which the agent must run this skill.>
+
+## Run
+
+Run this exact command from the repository root.
+
+```bash
+python .claude/skills/<workflow_name>/scripts/start.py
+```
+
+## Output
+
+The last line of stdout is one JSON object.
+
+- Ready: `<the ready JSON of the contract, with example values>`. <What the agent does next.>
+- Error: `{"status": "error", "reason": "precondition_failed"}`, with one of these reasons.
+  Report the reason to the user and stop. Never work around it.
+  - `all_permitted_ports_exhausted`: <what it means, and what the agent must not do>
+  - `cors_origin_rejected`: <what it means, and what the agent must not do>
+  - `precondition_failed`: <what it means, and what the agent must not do>
+
+## Rules
+
+<One bullet for each contract invariant: a direct negative instruction that starts with Never.>
+
+## Stop
+
+```bash
+python .claude/skills/<workflow_name>/scripts/start.py stop
+```
+"""
+_HEADINGS = ("## When to use", "## Run", "## Output", "## Rules", "## Stop")
 _SCRIPT = (
     "Write the script and the SKILL.md for the contract in the data. "
-    "SKILL.md starts with YAML front matter that has `name` and `description`; the description says "
-    "when an agent must use the skill, and the body tells the agent to run the script and never "
-    "to start the tool directly. Claude Code installs the skill at "
-    "`.claude/skills/<workflow_name>/`, so the command in SKILL.md is "
-    "`python .claude/skills/<workflow_name>/scripts/start.py`, run from the repository root. "
+    "SKILL.md follows the template at the end of these instructions: the same two front matter "
+    "keys, the same five headings in the same order, and the same commands. "
+    "Fill every `<...>` placeholder from the contract and leave no `<...>` text in the answer. "
+    "Where the contract itself has such a field, write an example value, such as 5173 for a port. "
+    "`name` is the `workflow_name` of the contract. "
+    "Claude Code reads only the `description` to decide whether to load the skill, so make it "
+    "specific: one line, third person, no colon, under 1024 characters. "
+    "It starts with `Use when`. It names each concrete user goal and trigger phrase. "
+    "It ends with what the agent must never do by hand. An example for a dev server: "
+    "`Use when the user wants to start the web frontend, run the dev server, start Vite, check "
+    "that the backend accepts requests, or fix a CORS or port problem. Never start vite by hand.` "
+    "Claude Code installs the skill at `.claude/skills/<workflow_name>/`, so the agent runs the "
+    "script by that path from the repository root, never as `python scripts/start.py`. "
     "If the data has a `gate_failure`, repair the script or the skill. "
-    "The contract is fixed." + CONSTRAINTS
+    "The contract is fixed." + CONSTRAINTS + "SKILL.md template:\n" + SKILL_TEMPLATE
 )
 
 
@@ -76,11 +126,36 @@ class Script(BaseModel):
 
     @field_validator("skill_md")
     @classmethod
-    def _has_front_matter(cls, text: str) -> str:
+    def _follows_the_template(cls, text: str) -> str:
         head = text.split("---")[1] if text.startswith("---") and text.count("---") > 1 else ""
-        if "name:" not in head or "description:" not in head:
-            message = "SKILL.md needs front matter with name and description"
-            raise ValueError(message)
+        keys = dict(re.findall(r"^([\w-]+): *(\S.*)$", head, re.MULTILINE))
+        lacks = [key for key in ("name", "description") if key not in keys]
+        starts = re.match(r"[\"']?Use (this skill )?when\b", keys.get("description", ""))
+        places = [text.find(f"\n{heading}\n") for heading in _HEADINGS]
+        missing = [heading for heading in _HEADINGS if f"\n{heading}\n" not in text]
+        run = text.partition("\n## Run\n")[2].partition("\n## Output\n")[0]
+        command = re.search(r"\.claude/skills/\S+/scripts/start\.py", run)
+        holes = sorted(set(re.findall(r"<\w[^<>\n]*>", text)))
+        faults = [
+            (lacks, f"the front matter at the top lacks: {', '.join(lacks)}"),
+            (
+                not starts,
+                "the `description:` line must start with `Use when` or `Use this skill when`",
+            ),
+            (missing, f"these headings are missing: {', '.join(missing)}"),
+            (places != sorted(places), f"the heading order must be {', '.join(_HEADINGS)}"),
+            (
+                not command,
+                (
+                    "the `## Run` section must hold the command "
+                    "`python .claude/skills/NAME/scripts/start.py`, where NAME is the workflow_name"
+                ),
+            ),
+            (holes, f"fill each placeholder, this text is still in the answer: {holes}"),
+        ]
+        for fault, message in faults:
+            if fault:
+                raise ValueError(message)
         return text
 
 
