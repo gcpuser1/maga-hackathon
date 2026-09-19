@@ -26,6 +26,9 @@ _EXIT_CODE = re.compile(r"Exit code (\d+)")
 _HEAD, _TAIL = 600, 400
 _ENTRIES = TypeAdapter(list[Entry])
 _CHECKPOINTS = TypeAdapter(dict[str, list[int]])
+# Raise it when the parse rules change. A checkpoint of another version is parsed again, so the
+# stored entries never stay behind the parser.
+PARSER_VERSION = 2
 
 
 class _Message(BaseModel):
@@ -112,6 +115,23 @@ def _fields(kind: str, block: dict[str, Any], *, is_meta: bool) -> dict[str, Any
     return None  # thinking, images
 
 
+def _typed_mid_turn(attachment: object) -> str | None:
+    """The text of a message that a person typed while the agent worked, else None.
+
+    Claude Code stores it as an `attachment` line, not as a `user` line. A task notification and
+    a message from another agent have the same line type, and no person typed them.
+    """
+    if not isinstance(attachment, dict):
+        return None
+    fields = cast("dict[str, Any]", attachment)
+    origin = fields.get("origin")
+    human = isinstance(origin, dict) and cast("dict[str, Any]", origin).get("kind") == "human"
+    prompt = fields.get("prompt")
+    if fields.get("type") == "queued_command" and fields.get("humanTurn") is True and human:
+        return prompt if isinstance(prompt, str) else None
+    return None
+
+
 def _lines(path: Path) -> Iterator[tuple[str, _Line] | None]:
     """Yield each `user` and `assistant` line, and None for each malformed line."""
     with path.open(encoding="utf-8", errors="replace") as raw_lines:
@@ -119,9 +139,12 @@ def _lines(path: Path) -> Iterator[tuple[str, _Line] | None]:
             if not raw.strip():
                 continue
             try:
-                kind = json.loads(raw)["type"]
+                line = json.loads(raw)
+                kind = line["type"]
                 if kind in {"user", "assistant"}:  # an import list, never a skip list
-                    yield kind, _Line.model_validate_json(raw)
+                    yield kind, _Line.model_validate(line)
+                elif kind == "attachment" and (typed := _typed_mid_turn(line.get("attachment"))):
+                    yield "user", _Line.model_validate(line | {"message": {"content": typed}})
             except (ValueError, KeyError, TypeError):
                 yield None
 
@@ -166,8 +189,8 @@ def parse_session(path: Path) -> tuple[list[Entry], int]:
 def read(paths: Iterable[Path], state: Path) -> dict[str, int]:
     """Store the entries of each session under `state`/entries and report the counts.
 
-    `import_checkpoints.json` holds the size, the modification time, and the malformed-line
-    count of each imported file, so an unchanged file is not parsed again.
+    `import_checkpoints.json` holds the size, the modification time, the malformed-line count,
+    and the parser version of each imported file, so an unchanged file is not parsed again.
     """
     report = {"files": 0, "unchanged_files": 0, "new_entries": 0, "malformed_lines": 0}
     (state / "entries").mkdir(parents=True, exist_ok=True)
@@ -182,7 +205,7 @@ def read(paths: Iterable[Path], state: Path) -> dict[str, int]:
             report["files"] += 1
             stat = path.stat()
             seen = checkpoints.get(str(path))
-            if seen and seen[:2] == [stat.st_size, stat.st_mtime_ns]:
+            if seen and [*seen[:2], *seen[3:]] == [stat.st_size, stat.st_mtime_ns, PARSER_VERSION]:
                 report["unchanged_files"] += 1
                 report["malformed_lines"] += seen[2]  # still reported, never silent
                 continue
@@ -197,7 +220,7 @@ def read(paths: Iterable[Path], state: Path) -> dict[str, int]:
                 target.write_bytes(_ENTRIES.dump_json(list(merged.values())))
                 report["new_entries"] += len(merged) - len(known)
             # Only now: a checkpoint before its entries would hide a failed write for ever.
-            checkpoints[str(path)] = [stat.st_size, stat.st_mtime_ns, malformed]
+            checkpoints[str(path)] = [stat.st_size, stat.st_mtime_ns, malformed, PARSER_VERSION]
     finally:
         checkpoint_file.write_bytes(_CHECKPOINTS.dump_json(checkpoints))
     return report

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from maga import reader
 from maga.reader import PLACEHOLDER, parse_session, read, redact
 
 P1 = Path(__file__).parent / "fixtures" / "claude_code" / "p1"
@@ -89,6 +90,32 @@ def test_a_meta_user_line_is_not_a_human_message(tmp_path: Path) -> None:
     human, meta = parse_session(_write(tmp_path, [*lines]))[0]
     assert (human.source, human.entry_type) == ("user", "user_input")
     assert (meta.source, meta.entry_type) == ("system", "generic_message")
+
+
+def _queued(number: int, prompt: str, **attachment: object) -> dict[str, Any]:
+    line = _line(number, "attachment", "unused")
+    del line["message"]
+    return line | {"attachment": {"type": "queued_command", "prompt": prompt, **attachment}}
+
+
+def test_a_message_typed_while_the_agent_worked_is_a_human_message(tmp_path: Path) -> None:
+    secret = "API_KEY=" + "FAKE_SECRET_VALUE_001"
+    typed = {"origin": {"kind": "human"}, "humanTurn": True, "commandMode": "prompt"}
+    lines = [
+        _call(1, "toolu_x_01", "kill -9 4242"),
+        _queued(2, f"don't kill that process, {secret}", **typed),
+        _queued(3, "<task-notification>done</task-notification>", commandMode="task-notification"),
+        _queued(4, "a report from another agent", origin={"kind": "peer"}, commandMode="prompt"),
+        _queued(5, "typed, but the flag is absent", origin={"kind": "human"}),
+        _line(6, "attachment", "unused") | {"attachment": "not an object"},
+    ]
+    entries, malformed = parse_session(_write(tmp_path, [*lines]))
+    assert malformed == 0
+    assert [(e.entry_id, e.entry_type, e.source) for e in entries] == [
+        ("sess-x-L01", "tool_call", "model"),
+        ("sess-x-L02", "user_input", "user"),
+    ]
+    assert entries[1].content == f"don't kill that process, API_KEY={PLACEHOLDER}"
 
 
 def test_par_008_an_unknown_line_type_is_not_imported(tmp_path: Path) -> None:
@@ -243,3 +270,14 @@ def test_a_failed_import_leaves_no_checkpoint_for_the_unfinished_file(tmp_path: 
     checkpoints = json.loads((state / "import_checkpoints.json").read_text())
     assert list(checkpoints) == [str(good)]  # written after its entries, and only for that file
     assert read([good], state)["unchanged_files"] == 1
+
+
+def test_a_checkpoint_of_an_older_parser_is_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = tmp_path / "state"
+    assert read([P1 / "sess-a.jsonl"], state)["unchanged_files"] == 0
+    assert read([P1 / "sess-a.jsonl"], state)["unchanged_files"] == 1
+    monkeypatch.setattr(reader, "PARSER_VERSION", reader.PARSER_VERSION + 1)
+    assert read([P1 / "sess-a.jsonl"], state)["unchanged_files"] == 0
+    assert read([P1 / "sess-a.jsonl"], state)["unchanged_files"] == 1
