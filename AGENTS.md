@@ -1,6 +1,6 @@
 # Agent Workflow for MAGA (Mining Agent Generated Automation)
 
-This document governs coding agent development within the MAGA repository (`ufs-lab/maga-hackathon`). Every task moves through the four beats below, backed by workspace skills in `.agents/skills/`.
+This document governs coding agent development within the MAGA repository (`ufs-lab/maga-hackathon`). Every task moves through the four beats below, backed by installed agent skills (`~/.gemini/config/skills/`).
 
 ---
 
@@ -105,7 +105,7 @@ logfire auth
 
 ## 5. Skill Sources & Attribution
 
-All workspace skills are located in `.agents/skills/`:
+The development workflow skills are installed in the agent runtime environment (`~/.gemini/config/skills/`):
 
 | Skill | Description | Upstream Source / Attribution |
 | :--- | :--- | :--- |
