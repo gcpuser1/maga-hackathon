@@ -25,10 +25,15 @@ jobs:
 
       - uses: extractions/setup-just@v3
 
-      - uses: taiki-e/install-action@v2
+      # taiki-e/install-action has no gitleaks package, so take the pinned release binary.
+      - name: Install gitleaks
         if: github.event_name == 'pull_request'
-        with:
-          tool: gitleaks
+        env:
+          GITLEAKS_VERSION: 8.18.4
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
 
       - name: Gates (lock, format, lint, types, tests)
         run: just check
