@@ -59,11 +59,11 @@ The architecture uses 6 standardized stage names across all modules and document
 6. **Local File & Artifact Storage (No SQLite in MVP):** All state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`.
 7. **Two-Gate Verification & Isolation Boundaries:**
    - **Gate 1 (Execution Correctness):** Disposable local container with **zero external network access** (`--network none`) to prove the script runs deterministically offline. Gate 1 is model-free.
-   - **Gate 2 (Autonomous Agent Reuse):** Disposable sandbox with **model API access only** (outbound HTTPS to the Anthropic API endpoint only, because the fresh agent is Claude Code, with local loopback and repo credentials strictly inaccessible).
+   - **Gate 2 (Autonomous Agent Reuse):** Disposable sandbox with **model API access only** (outbound HTTPS to the Anthropic API endpoint only, because the fresh agent is Claude Code, with the loopback of the host and the repository credentials strictly inaccessible). The stub backend runs inside the same container as the agent, so `localhost:4000` inside the container works.
    - *Host Worktree Run:* A developer convenience only. It is unconfined developer host execution without security guarantees, and it never counts as a formal Gate 1 result.
 8. **Reuse Pass Rule (Repeatability Threshold):**
    - Tested across **5 fresh temporary worktree runs** with ordinary task prompts.
-   - Threshold for passing Gate 2: **At least 4 successful runs out of 5** (80% repeatability) where the agent discovers the skill and solves the task in $\le 2$ turns without user intervention.
+   - Threshold for passing Gate 2: **At least 4 successful runs out of 5** (80% repeatability) where the agent discovers the skill and solves the task without user intervention. The first version has no turn limit.
 9. **Shared Bounded Revision Budget with Fixed Contract:** A strict combined limit across Gate 1 and Gate 2 of `MAX_TOTAL_REVISIONS = 3`. The approved `Contract` remains strictly fixed during repair; only the generated script or skill prompt may be revised.
 10. **Existing Tool Lookup Before Synthesis (`DECIDE`):** Prior to synthesizing new scripts, MAGA inspects repository tools (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.claude/skills/`) and user-level tools (`~/.claude/scripts/`, `~/.claude/skills/`). If an existing tool fulfills the procedure, MAGA wraps it in a `SKILL.md` rather than generating redundant duplicate code. If repetition reveals a defect to repair, not a procedure to automate, `DECIDE` returns fix at source.
 11. **Security & Privacy Rules:**
@@ -170,7 +170,7 @@ flowchart TD
         SCRIPT_GEN --> PKG
         
         PKG --> GATE1["Gate 1: Execution Correctness<br/>(Local Container, Zero Network, Rejects No-Op and Broken Variants)"]
-        GATE1 -->|All Contract Assertions Pass| GATE2["Gate 2: Autonomous Agent Reuse Test<br/>(Headless agy/claude unprompted discovery <= 2 turns)"]
+        GATE1 -->|All Contract Assertions Pass| GATE2["Gate 2: Autonomous Agent Reuse Test<br/>(Headless claude -p, unprompted discovery, 4 of 5 runs)"]
         
         GATE1 -->|Fails Contract Checks| REV_CHECK{"Shared Revisions<br/>total < 3?"}
         GATE2 -->|Skill Ignored or Failed| REV_CHECK
@@ -218,7 +218,7 @@ The system implements the 6 core components defined in the architecture specific
    - **Port Numbers:** Specific port occurrences (`5173`, `5174`, `3000`, `4000`, `8080`) are extracted and converted to typed port list parameters (`$PORT_LIST`).
    - **Ephemeral Tokens:** Timestamps, process IDs, git commit hashes, and UUIDs are abstracted into template parameters.
 5. **Ranking Order:**
-   - Rank repeated user corrections first, repeated error-and-fix pairs second, and successful repetition third.
+   - Rank repeated user corrections first, repeated error-and-fix pairs second, and successful repetition third. `Candidate.evidence_type` records the type. Inside one type, rank by distinct sessions (most first), then by `candidate_id`.
    - Keep a route to model analysis for useful unmatched episodes.
    - Whether the rule 1 threshold also applies to corrections and error-and-fix pairs is an open question (section 11).
 
@@ -239,8 +239,9 @@ If a matching script already exists, `DECIDE` returns reuse existing and MAGA sy
 A critical architectural guarantee is that **both Gate 1 and Gate 2 share a single bounded revision budget** (`MAX_TOTAL_REVISIONS = 3`), and **the acceptance contract remains strictly fixed during repair**:
 - If a package fails functional contract checks in Gate 1, or if a fresh agent in Gate 2 fails to discover or correctly execute the skill, a shared revision counter increments.
 - The repair loop refines only the **generated script implementation or skill prompt description**. It **never** weakens or refines the acceptance contract to make failing tests pass.
+- The outcome `inconclusive` means an infrastructure failure only: the container did not start, a model call timed out, or an API returned an error. It uses no revision, and an inconclusive candidate is never published. A Gate 2 run that could not execute is run again once, and it is not one of the five counted runs.
 - Modifying the contract itself invalidates the candidate and terminates the autonomous repair loop, requiring fresh human/triage review.
-- If the combined revisions reach the limit (`total_revisions >= 3`), the pipeline transitions immediately to `UNVERIFIED` and permanently terminates without creating a pull request.
+- The budget is one first attempt plus three revisions, shared across both gates. `total_revisions` counts the revisions already made. A gate failure with `total_revisions < 3` starts a revision. The fourth failure (`total_revisions >= 3`) sends the candidate to `UNVERIFIED`, and it ends there with no pull request.
 
 ```mermaid
 stateDiagram-v2
@@ -260,12 +261,14 @@ stateDiagram-v2
     GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in a local container with no network
     
     VALIDATING --> REVISING: Gate 1 failure (total_revisions < 3)
-    VALIDATING --> UNVERIFIED: Gate 1 failure (total_revisions >= 3 or inconclusive)
+    VALIDATING --> UNVERIFIED: Gate 1 failure (total_revisions >= 3)
+    VALIDATING --> INCONCLUSIVE: Infrastructure failure (no revision used, never published)
     
     VALIDATING --> EVALUATING_REUSE: Gate 1 passed (script functionally verified)
     
     EVALUATING_REUSE --> REVISING: Gate 2 failure (total_revisions < 3)
     EVALUATING_REUSE --> UNVERIFIED: Gate 2 failure (total_revisions >= 3)
+    EVALUATING_REUSE --> INCONCLUSIVE: Infrastructure failure (no revision used, never published)
     
     REVISING --> GENERATING: Self-correction prompt with failure logs (script/skill only; contract fixed)
     
@@ -360,7 +363,8 @@ class Candidate(BaseModel):
     title: str
     command_sequence: List[str]
     normalized_template: str
-    frequency: int
+    frequency: int  # Distinct sessions
+    evidence_type: Literal["correction", "error_fix", "repetition"]
     evidence: Evidence
     triage_status: Literal["pending", "accepted", "reuse_existing", "fix_at_source", "rejected", "clarification_needed"] = "pending"
     rejection_reason: Optional[str] = None
@@ -533,7 +537,7 @@ A key architectural distinction is that **temporary directories and Git worktree
 * **Repeatability Procedure & Pass Threshold:**
   - Evaluated across **5 fresh temporary project worktrees** (`claude -p "<task>"`).
   - **Pass Threshold:** **At least 4 successful runs out of 5** (80% repeatability).
-  - **Run Criteria:** The agent must inspect the skill via `SKILL.md`, invoke the script (`scripts/start.py`), and verify the backend handshake within **$\le 2$ turns** without human intervention or fatal errors.
+  - **Run Criteria:** A run passes when its transcript contains a call to the script path (`scripts/start.py`) and no direct launch of `vite`, with no human intervention and no fatal error. The first version has no turn limit.
 
 ---
 
