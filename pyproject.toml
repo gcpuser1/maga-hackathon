@@ -13,6 +13,7 @@ readme = "README.md"
 requires-python = ">=3.13.0,<3.14.0"
 dependencies = [
     "pydantic>=2.13.5",
+    "pydantic-ai-slim[google]>=2.46.0",
 ]
 
 [dependency-groups]
