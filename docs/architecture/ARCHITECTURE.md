@@ -10,17 +10,35 @@
 ## 1. Executive Summary & Problem Framing
 
 ### 1.1 The Problem
-Coding agents repeatedly reconstruct the same project-specific procedures across independent sessions. Tasks such as configuring isolated worktrees, launching multi-service development stacks with strict port and CORS constraints, or preparing local test databases consume substantial token budgets and developer time. Because agents reconstruct these steps ad-hoc, error rates and omitted steps remain high, even when high-level instructions exist in repository markdown. Crucially, successful procedure traces remain trapped inside ephemeral session logs instead of being promoted into durable, testable, repository-local automation.
+Coding agents repeatedly reconstruct the same project-specific procedures. This consumes time and tokens. Required steps can be missed, even when documented. Successful sessions contain useful procedures; failed attempts reveal missing steps and checks. The system uses both as evidence for reusable automation.
 
 ### 1.2 Our Solution
-**MAGA** is a repository-local learning agent that mines session transcripts for recurring workflows, formalizes strict automation contracts, synthesizes parameterized scripts paired with discoverable Antigravity workspace skills, validates correctness inside an isolated execution harness, verifies that a fresh agent discovers and reuses the skill without prompting, and packages the result into an evidence-backed pull request.
+**MAGA** discovers repeated procedures in session transcripts, assesses their suitability for automation, formalizes an **automation contract**, generates tested parameterized scripts paired with discoverable workspace skills, verifies execution and unprompted agent reuse, and publishes human-reviewable proposals.
+
+Reference architecture specification: [From session transcripts to tested tools](https://from-session-transcripts-to-tested-tools.ledger-rocket.here.now/)
 
 > **Short Pitch:**  
-> *“Your agent keeps reconstructing the same procedure. We discover that repetition and turn it into one tested tool.”*
+> *“Find repeated procedures. Turn them into scripts. Give agents skills that call those scripts.”*
 
 ---
 
-## 2. Core Decisions & System Boundaries
+## 2. Terminology & Core Concepts
+
+Aligned strictly with the team's specification:
+* **Session:** One recorded interaction between a person and a coding agent, including tool use.
+* **Transcript:** The recorded messages, tool calls, and tool results from a session.
+* **Transcript entry:** One recorded item: a message, a tool call, or a tool result (used uniformly instead of generic "event").
+* **Task:** A goal the agent tries to complete, spanning one or many transcript entries.
+* **Procedure:** A sequence of steps to achieve a specific outcome across tasks.
+* **Candidate:** A procedure proposed for automation, pending triage and verification.
+* **Triage:** The decision to generate new automation, reuse existing automation, request clarification, or reject.
+* **Script:** Executable code that performs the procedure and checks its result.
+* **Skill:** Instructions teaching an agent when and how to call the script.
+* **Automation contract:** The formal specification of inputs, preconditions, permitted changes, postconditions, rerun behaviour, failure behaviour, and acceptance checks.
+* **Package:** The script, skill, tests, and contract documentation for one procedure.
+* **Verifier:** The component that tests a package against its contract (Execution Correctness) and evaluates unprompted agent discovery (Agent Reuse). Out comes: `pass`, `fail`, or `inconclusive`.
+* **Repository publisher:** Proposes a Git branch and human-reviewable PR/MR.
+
 
 Based on team alignment and hackathon constraints:
 1. **Target Coding Agent:** Antigravity (CLI version `1.2.7` verified).
@@ -109,20 +127,18 @@ flowchart TD
 
 ---
 
-## 5. Modular Boundaries
+## 5. Modular Boundaries & Architecture Components
 
-The system is organized into decoupled Python modules governed by strict Pydantic schemas:
+The system implements the 6 components defined in the architecture specification:
 
-| Module | Responsibility | Primary Inputs | Primary Outputs |
-| :--- | :--- | :--- | :--- |
-| `maga.ingest` | Normalizes transcript JSONL lines into structured events; redacts sensitive environment keys and credentials. | Raw `transcript_full.jsonl` | Anonymized `SessionEvent` records in SQLite |
-| `maga.store` | Manages SQLite tables, state persistence, step checkpoints, and evaluation results. | Typed records | Relational data (`maga.db`) |
-| `maga.mining` | Extracts contiguous command subsequences, tool invocations, and directory contexts; groups recurring patterns. | `SessionEvent` stream | `ProcedureCandidate` clusters |
-| `maga.contract` | Formalizes pre/postconditions, inputs, permitted resource impacts, and acceptance assertions. | Ranked candidate + target repo context | `AutomationContract` (Pydantic model) |
-| `maga.codegen` | Generates shell/Python automation scripts, Antigravity `SKILL.md`, and contract test suites. | `AutomationContract` | Source files in temporary staging tree |
-| `maga.validator` | Executes contract tests against disposable working copies (local sandbox or ephemeral Modal container). | Staged code + test suite | Deterministic test report (`Gate1Result`) |
-| `maga.evaluator` | Launches a fresh `agy` process with a neutral prompt to verify autonomous skill discovery and execution. | Clean repo with `.agents/skills/` | Agent reuse report (`Gate2Result`) |
-| `maga.proposal` | Formats the pull request branch, generates evidence diffs, and creates the PR against the target monorepo. | Passed artifacts + Gate 1 & 2 logs | Git branch & GitHub Pull Request |
+| Specification Component | Python Module | Responsibility | Primary Inputs | Primary Outputs |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Transcript reader** | `maga.reader` | Reads selected local transcript files, normalizes entries, redacts sensitive keys/secrets, and tracks watermarks. Never executes commands from transcripts. | Raw `transcript_full.jsonl` | Anonymized `TranscriptEntry` records in SQLite |
+| **2. Task finder** | `maga.finder` | Groups related entries into tasks, identifies recurring procedures across tasks, and separates observed facts from inferences. | `TranscriptEntry` stream | `ProcedureCandidate` clusters with evidence references |
+| **3. Automation triage** | `maga.triage` | Assesses suitability against repository conventions; decides whether to reuse existing tools, generate new automation, request clarification, or reject. Synthesizes automation contracts. | Candidates + existing scripts/skills | `AutomationContract` (Pydantic model) or triage disposition |
+| **4. Package generator** | `maga.generator` | Generates candidate script, skill (`SKILL.md`), and unit tests into an isolated staging directory. Keeps secrets out of code and docs. | Accepted `AutomationContract` | Staged package (`scripts/`, `SKILL.md`, `tests/`) |
+| **5. Verifier** | `maga.verifier` | Evaluates package against contract in disposable sandbox (Gate 1), and tests unprompted discovery by a fresh agent (Gate 2). Outputs `pass`, `fail`, or `inconclusive`. | Staged package + acceptance checks + clean testbed | `VerificationReport` (`pass`, `fail`, `inconclusive`) |
+| **6. Repository publisher** | `maga.publisher` | Generates proposal branch and human-reviewable PR/MR with read-back verification. A human decides whether to merge. | Verified package + maintainer approval | Git branch & GitHub Pull Request |
 
 ---
 
@@ -130,34 +146,35 @@ The system is organized into decoupled Python modules governed by strict Pydanti
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DISCOVERED: Transcript mined (frequency >= threshold)
-    DISCOVERED --> TRIAGED: Suitability evaluated against repo capabilities
+    [*] --> DISCOVERED: Task finder detects recurring procedure
+    DISCOVERED --> TRIAGED: Automation triage evaluates candidate
     
-    TRIAGED --> REJECTED: Low repeatability / unbounded side effects
+    TRIAGED --> REJECTED: Low repeatability / unbounded side effects / unsafe
+    TRIAGED --> CLARIFICATION_REQUESTED: Unknown prerequisites / insufficient evidence
     TRIAGED --> CONTRACTED: Preconditions & acceptance checks formalized
     
-    CONTRACTED --> GENERATING: Generating script, skill, and test suite
-    GENERATING --> VALIDATING: Staged in isolated sandbox
+    CONTRACTED --> GENERATING: Package generator creates script, skill, tests
+    GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in sandbox
     
     VALIDATING --> REVISING: Gate 1 failure (revision budget > 0)
     REVISING --> GENERATING: Self-correction prompt with failure logs
-    VALIDATING --> UNVERIFIED: Revision budget exhausted (max 3 tries)
+    VALIDATING --> UNVERIFIED: Revision budget exhausted or inconclusive evidence
     
     VALIDATING --> EVALUATING_REUSE: Gate 1 passed (script functionally verified)
     
     EVALUATING_REUSE --> REVISING: Gate 2 failure (agent did not discover/use skill)
     EVALUATING_REUSE --> PROPOSED: Gate 2 passed (autonomous discovery confirmed)
     
-    PROPOSED --> HUMAN_APPROVED: PR reviewed by maintainer
+    PROPOSED --> HUMAN_APPROVED: PR reviewed by human maintainer
     PROPOSED --> REJECTED: PR closed without merge
-    HUMAN_APPROVED --> MERGED: Committed to default branch
+    HUMAN_APPROVED --> MERGED: Merged into default branch
 ```
 
 ---
 
 ## 7. Data Architecture & Relational Schema (SQLite)
 
-Local SQLite (`maga.db`) persists pipeline progression without external database dependencies:
+Local SQLite (`maga.db`) manages state and incremental watermarks:
 
 ```sql
 -- Tracked session sources and incremental import watermarks
@@ -169,12 +186,12 @@ CREATE TABLE import_sessions (
     imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Canonical event timeline extracted from transcripts
-CREATE TABLE session_events (
-    event_id TEXT PRIMARY KEY,
+-- Canonical transcript entries (messages, tool calls, tool results)
+CREATE TABLE transcript_entries (
+    entry_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES import_sessions(session_id),
     step_index INTEGER NOT NULL,
-    event_type TEXT NOT NULL,     -- 'tool_call', 'tool_result', 'user_input'
+    entry_type TEXT NOT NULL,     -- 'user_message', 'tool_call', 'tool_result', 'system_message'
     tool_name TEXT,
     command_line TEXT,
     working_dir TEXT,
@@ -189,19 +206,19 @@ CREATE TABLE procedure_candidates (
     fingerprint TEXT UNIQUE NOT NULL,
     workflow_name TEXT NOT NULL,
     occurrence_count INTEGER NOT NULL,
-    status TEXT NOT NULL,         -- 'DISCOVERED', 'CONTRACTED', 'VALIDATING', etc.
+    status TEXT NOT NULL,         -- 'DISCOVERED', 'TRIAGED', 'CONTRACTED', 'VALIDATING', etc.
     contract_json TEXT,
     revision_count INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Multi-gate verification results
+-- Verification outcomes (Gate 1 and Gate 2)
 CREATE TABLE verification_runs (
     run_id TEXT PRIMARY KEY,
     candidate_id TEXT NOT NULL REFERENCES procedure_candidates(candidate_id),
-    gate_number INTEGER NOT NULL, -- 1: Script Correctness, 2: Agent Reuse
-    passed BOOLEAN NOT NULL,
+    gate_number INTEGER NOT NULL, -- 1: Contract Validation, 2: Fresh Agent Reuse
+    outcome TEXT NOT NULL,        -- 'pass', 'fail', 'inconclusive'
     stdout_log TEXT,
     stderr_log TEXT,
     execution_duration_ms INTEGER,
