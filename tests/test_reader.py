@@ -156,6 +156,7 @@ def test_par_006_import_once(tmp_path: Path) -> None:
     state = tmp_path / "state"
     reports = [read([P1 / "sess-a.jsonl"], state) for _ in range(3)]
     assert [r["new_entries"] for r in reports] == [7, 0, 0]
+    assert [r["unchanged_files"] for r in reports] == [0, 1, 1]
     stored = json.loads((state / "entries" / "sess-a.json").read_text())
     assert len({e["entry_id"] for e in stored}) == len(stored) == 7
 
@@ -209,3 +210,36 @@ def test_rdx_004_redaction_keeps_non_secret_text(text: str) -> None:
 def test_rdx_006_known_limit_a_prose_password_is_not_redacted() -> None:
     text = "the database password is " + "FAKE_SECRET_VALUE_003"
     assert "FAKE_SECRET_VALUE_003" in redact(text), "known limit, not a wanted behaviour"
+
+
+def test_a_grown_file_is_read_again_and_the_stored_call_gets_its_late_result(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    path = _write(tmp_path, [_call(1, "toolu_x_01", "vite")])
+    assert read([path], state)["new_entries"] == 1
+    late = _result(2, "toolu_x_01", "Exit code 1\nPort 5173 is in use", is_error=True)
+    with path.open("a") as file:
+        file.write(json.dumps(late) + "\n")
+    report = read([path], state)
+    assert (report["new_entries"], report["unchanged_files"]) == (1, 0)
+    call, result = json.loads((state / "entries" / "sess-x.json").read_text())
+    assert (call["entry_type"], call["exit_code"], result["exit_code"]) == ("tool_call", 1, 1)
+
+
+def test_the_malformed_count_of_an_unchanged_file_is_still_reported(tmp_path: Path) -> None:
+    path = _write(tmp_path, [_line(1, "user", "hello"), '{"type": "assistant", "sessionId":'])
+    reports = [read([path], tmp_path / "state") for _ in range(2)]
+    assert [(r["unchanged_files"], r["malformed_lines"]) for r in reports] == [(0, 1), (1, 1)]
+
+
+def test_a_failed_import_leaves_no_checkpoint_for_the_unfinished_file(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    good = P1 / "sess-a.jsonl"
+    unreadable = tmp_path / "a-directory.jsonl"  # `stat` works, and the parse fails
+    unreadable.mkdir()
+    with pytest.raises(IsADirectoryError):
+        read([good, unreadable], state)
+    checkpoints = json.loads((state / "import_checkpoints.json").read_text())
+    assert list(checkpoints) == [str(good)]  # written after its entries, and only for that file
+    assert read([good], state)["unchanged_files"] == 1

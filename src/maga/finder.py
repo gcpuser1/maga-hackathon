@@ -18,6 +18,7 @@ from maga.schemas import Candidate, Entry, Evidence
 
 THRESHOLD = 3  # distinct sessions
 _LENGTHS = range(2, 6)
+_MAX_NOTES = 10  # each note is at most 300 characters
 _FIX_WINDOW = 3  # tool actions after the failed step
 _TYPE_ORDER = {"correction": 0, "error_fix": 1, "repetition": 2}
 _ENTRIES = TypeAdapter(list[Entry])
@@ -97,6 +98,11 @@ class _Seen:
     notes: set[str] = field(default_factory=set[str])
 
 
+def _bounded(notes: set[str]) -> list[str]:
+    """Evidence goes to the model, so its size must not grow with the number of sessions."""
+    return sorted(notes)[:_MAX_NOTES]
+
+
 def _candidate(kind: str, key: tuple[str, ...], seen: _Seen) -> Candidate:
     template = "\n".join(key)
     return Candidate.model_validate(
@@ -112,8 +118,8 @@ def _candidate(kind: str, key: tuple[str, ...], seen: _Seen) -> Candidate:
                 observed_occurrences=seen.occurrences,
                 observed_turns_mean=float(len(key)),
                 observed_tokens_mean=seen.tokens // seen.occurrences,
-                failure_traces=sorted(seen.notes) if kind == "error_fix" else [],
-                common_pitfalls=sorted(seen.notes) if kind == "correction" else [],
+                failure_traces=_bounded(seen.notes) if kind == "error_fix" else [],
+                common_pitfalls=_bounded(seen.notes) if kind == "correction" else [],
             ),
         }
     )
@@ -221,7 +227,7 @@ def find(
         for kind, found in seen.items()
     }
     flagged["correction"] = {
-        key: s for key, s in flagged["correction"].items() if confirm(key[0], sorted(s.notes))
+        key: s for key, s in flagged["correction"].items() if confirm(key[0], _bounded(s.notes))
     }
     # A part of a longer flagged sequence, seen in the same sessions, is the same procedure.
     repeats = flagged["repetition"]
