@@ -27,10 +27,12 @@ A `BLOCKED` test names the open question that blocks it.
 
 ## Conventions
 
-- "Stub model" means a test double that replaces every model.
+- "The model" means the model (Gemini) that MAGA calls when a stage needs a model to read transcript excerpts.
+- "Stub model" means a test double that replaces the model.
   It returns a fixed response and it records every request that it receives.
 - "Model-bound payload" means the complete request that MAGA sends to a model or to the Gateway.
-- "Stub agent runner" means a test double that replaces `claude -p` and `agy --print`.
+- "Stub agent runner" means a test double that replaces `claude -p`.
+- The six stages are `READ`, `FIND`, `DECIDE`, `BUILD`, `CHECK`, and `PROPOSE`.
 - "Parametrised" means one test that runs one time for each listed case.
   Each case must report its own pass or fail result.
 - The sources name the modules `maga.reader`, `maga.finder`, `maga.triage`, `maga.generator`, `maga.verifier`, `maga.publisher`, and `maga.schemas`.
@@ -44,11 +46,11 @@ A `BLOCKED` test names the open question that blocks it.
 | Area | ID prefix | Tests | Source sections |
 | :--- | :--- | ---: | :--- |
 | Pydantic schemas | `TT-SCH` | 14 | `ARCHITECTURE.md` 7.1, 7.2 |
-| Transcript parsing | `TT-PAR` | 8 | `ARCHITECTURE.md` 3.2, 5; here.now architecture "Contracts at each boundary", "Discovery, ranking, and long sessions" |
+| Transcript parsing | `TT-PAR` | 8 | `ARCHITECTURE.md` 2.1, 3.2, 5; here.now architecture "Contracts at each boundary", "Discovery, ranking, and long sessions" |
 | Normalisation | `TT-NRM` | 10 | `ARCHITECTURE.md` 5.1 rule 4 |
-| Sequence counting | `TT-SEQ` | 7 | `ARCHITECTURE.md` 5.1 rule 1 |
+| Sequence counting and ranking | `TT-SEQ` | 8 | `ARCHITECTURE.md` 5.1 rules 1 and 5 |
 | Error-and-fix detection | `TT-EFX` | 6 | `ARCHITECTURE.md` 5.1 rule 2 |
-| User-correction detection | `TT-COR` | 4 | `ARCHITECTURE.md` 5.1 rule 3 |
+| User-correction detection | `TT-COR` | 5 | `ARCHITECTURE.md` 3.2, 5.1 rule 3 |
 | Chunking | `TT-CHK` | 6 | here.now architecture "Discovery, ranking, and long sessions" |
 | Redactor | `TT-RDX` | 8 | `ARCHITECTURE.md` 10.1; here.now one-pager "Keep control" |
 | State storage | `TT-STO` | 5 | `ARCHITECTURE.md` 7; `AGENTS.md` 2.2 |
@@ -57,48 +59,50 @@ A `BLOCKED` test names the open question that blocks it.
 | Independent test synthesis | `TT-IND` | 3 | `ARCHITECTURE.md` 2.2; `AGENTS.md` 2.6 |
 | Acceptance suite strength | `TT-ACC` | 7 | here.now one-pager "Prove it works"; `ARCHITECTURE.md` 7.2 |
 | Gate 1 isolation | `TT-G1I` | 5 | `ARCHITECTURE.md` 9, 9.1 |
-| Gate 2 reuse evaluation | `TT-G2R` | 10 | `ARCHITECTURE.md` 2.2, 9.2 |
-| Publisher | `TT-PUB` | 5 | here.now architecture "Contracts at each boundary", Publisher |
+| Gate 2 reuse evaluation | `TT-G2R` | 9 | `ARCHITECTURE.md` 2.2, 6, 9.2 |
+| Publisher | `TT-PUB` | 5 | `ARCHITECTURE.md` 2.1, 2.2 decision 2, 5 (row 6) |
 | Observability | `TT-OBS` | 4 | here.now architecture "Technology choices", Pydantic Logfire |
 | Resource and failure behaviour | `TT-RES` | 6 | `ARCHITECTURE.md` 7.1, 10.1; here.now architecture "Contracts at each boundary" |
-| Total | | 119 | |
+| Total | | 120 | |
+
+Five tests have the status `BLOCKED`, in full or in part: TT-PAR-004, TT-PAR-007, TT-NRM-009, TT-NRM-010, and TT-EFX-006.
 
 ## Shared synthetic fixtures
 
 All paths are relative to the repository root.
-The fixture IDs that start with `FX-AG`, `FX-GOLDEN`, `FX-DEMO`, `FX-SCRIPT`, and `FX-RUNS` are defined in [FUNCTIONAL_TESTS.md](FUNCTIONAL_TESTS.md).
+The fixture IDs that start with `FX-CC`, `FX-GOLDEN`, `FX-DEMO`, `FX-SCRIPT`, and `FX-RUNS` are defined in [FUNCTIONAL_TESTS.md](FUNCTIONAL_TESTS.md).
 This file adds these fixtures.
 
 | Fixture ID | Intended path | Content |
 | :--- | :--- | :--- |
 | `FX-SCHEMA-MIN` | `tests/fixtures/schemas/minimal/<model>.json` | One JSON object for each of the 7 models, with all required fields and no optional field |
-| `FX-AG-MALFORMED` | `tests/fixtures/transcripts/antigravity_malformed/sess-m/` | 5 lines, of which line 3 is the text `{"step_index": 2, "source":` |
-| `FX-AG-OVERSIZE` | `tests/fixtures/transcripts/antigravity_oversize/sess-o/` | One command whose `GENERIC` result has 2000 lines of the form `LINE-0001` to `LINE-2000` |
-| `FX-AG-LONG` | `tests/fixtures/transcripts/antigravity_long/sess-l/` | One `USER_INPUT` step and 40 commands `echo step-01` to `echo step-40`, each with a result (81 lines) |
-| `FX-SCRIPT-AUTOINC` | `tests/fixtures/scripts/variants/autoincrement.sh` | `FX-SCRIPT-REF` without strict port binding |
-| `FX-SCRIPT-DUP` | `tests/fixtures/scripts/variants/duplicate_on_rerun.sh` | `FX-SCRIPT-REF` without the check for a running instance |
-| `FX-SCRIPT-KILL` | `tests/fixtures/scripts/variants/kills_unrelated.sh` | `FX-SCRIPT-REF` that stops the process on a busy permitted port |
-| `FX-SCRIPT-EDITCORS` | `tests/fixtures/scripts/variants/edits_cors.sh` | `FX-SCRIPT-REF` that adds `http://localhost:5175` to `apps/api/src/server.js` |
-| `FX-SCRIPT-TAMPER` | `tests/fixtures/scripts/variants/tampers_with_tests.sh` | `FX-SCRIPT-NOOP` that first overwrites every file below `tests/` with a test that always passes |
-| `FX-SCRIPT-NET` | `tests/fixtures/scripts/variants/needs_network.sh` | A script that sends an HTTP GET to `http://example.com/` and exits 0 only if it gets a response |
+| `FX-CC-MALFORMED` | `tests/fixtures/transcripts/claude_code/malformed/sess-m.jsonl` | 5 lines, of which line 3 is the text `{"type": "assistant", "sessionId":` |
+| `FX-CC-OVERSIZE` | `tests/fixtures/transcripts/claude_code/oversize/sess-o.jsonl` | One command whose `tool_result` content has 2000 lines of the form `LINE-0001` to `LINE-2000` |
+| `FX-CC-LONG` | `tests/fixtures/transcripts/claude_code/long/sess-l.jsonl` | One human message and 40 commands `echo step-01` to `echo step-40`, each with a result (81 lines) |
+| `FX-SCRIPT-AUTOINC` | `tests/fixtures/scripts/variants/autoincrement.py` | `FX-SCRIPT-REF` without strict port binding |
+| `FX-SCRIPT-DUP` | `tests/fixtures/scripts/variants/duplicate_on_rerun.py` | `FX-SCRIPT-REF` without the check for a running instance |
+| `FX-SCRIPT-KILL` | `tests/fixtures/scripts/variants/kills_unrelated.py` | `FX-SCRIPT-REF` that stops the process on a busy permitted port |
+| `FX-SCRIPT-EDITCORS` | `tests/fixtures/scripts/variants/edits_cors.py` | `FX-SCRIPT-REF` that adds `http://localhost:5175` to `apps/api/src/server.js` |
+| `FX-SCRIPT-TAMPER` | `tests/fixtures/scripts/variants/tampers_with_tests.py` | `FX-SCRIPT-NOOP` that first overwrites every file below `tests/` with a test that always passes |
+| `FX-SCRIPT-NET` | `tests/fixtures/scripts/variants/needs_network.py` | A script that sends an HTTP GET to `http://example.com/` and exits 0 only if it gets a response |
 | `FX-MODEL-BADJSON` | `tests/fixtures/model_responses/contract_not_json.txt` | The text `Here is the contract you asked for` |
 | `FX-MODEL-MISSING` | `tests/fixtures/model_responses/contract_missing_field.json` | `FX-GOLDEN` without the key `invariants` |
 | `FX-MODEL-STRIPPED` | `tests/fixtures/model_responses/contract_stripped.json` | `FX-GOLDEN` with `invariants` set to `[]` and `acceptance_checks` reduced to Case A |
 
 ### Gate 2 run transcript fixtures
 
-Each Gate 2 run fixture is a JSON list of `Entry` objects, plus the turn count of the run.
-The sources do not define the raw output format of `claude -p` or how to count a turn (see OQ-T09).
-The stub agent runner therefore returns parsed `Entry` lists and a turn count.
+A Gate 2 run is a Claude Code session, so READ can parse its transcript into `Entry` records.
+Each Gate 2 run fixture is a JSON list of `Entry` objects that the stub agent runner returns.
+The first version has no turn limit (`ARCHITECTURE.md` 9.2).
 
-A successful run has these entries, in this order, and a turn count of 2.
+A successful run has these entries, in this order.
 
 | `step_index` | `entry_type` | Key field |
 | ---: | :--- | :--- |
 | 0 | `user_input` | `content`: "Start the web frontend and verify backend connectivity" |
-| 1 | `tool_call` | `command_line`: `cat .agents/skills/vite-safe-dev-server/SKILL.md` |
+| 1 | `tool_call` | `command_line`: `cat .claude/skills/vite-safe-dev-server/SKILL.md` |
 | 2 | `tool_result` | `exit_code`: 0 |
-| 3 | `tool_call` | `command_line`: `bash .agents/skills/vite-safe-dev-server/scripts/start.sh` |
+| 3 | `tool_call` | `command_line`: `python .claude/skills/vite-safe-dev-server/scripts/start.py` |
 | 4 | `tool_result` | `exit_code`: 0, `sanitized_output`: `{"status": "ready", "port": 5173, "pid": 4321}` |
 
 ## Pydantic schemas
@@ -130,15 +134,15 @@ A successful run has these entries, in this order, and a turn count of 2.
   The required fields are these.
   `Entry`: `entry_id`, `session_id`, `step_index`, `source`, `entry_type`, `timestamp`.
   `Episode`: `episode_id`, `session_id`, `goal`, `entries`, `success`.
-  `Evidence`: `session_ids`, `observed_occurrences`, `baseline_turns_mean`, `baseline_tokens_mean`.
-  `Candidate`: `candidate_id`, `title`, `command_sequence`, `normalized_template`, `frequency`, `evidence`.
+  `Evidence`: `session_ids`, `observed_occurrences`, `observed_turns_mean`, `observed_tokens_mean`.
+  `Candidate`: `candidate_id`, `title`, `command_sequence`, `normalized_template`, `frequency`, `evidence_type`, `evidence`.
   `Contract`: `candidate_id`, `workflow_name`, `intent`, `inputs`, `preconditions`, `permitted_changes`, `postconditions`, `invariants`, `rerun_behaviour`, `failure_behaviour`, `acceptance_checks`.
   `Package`: `candidate_id`, `script_path`, `skill_path`, `test_path`, `contract`.
   `Verdict`: `candidate_id`, `gate_number`, `outcome`, `total_revisions`, `test_results`, `stdout_log`, `stderr_log`, `execution_duration_ms`, `timestamp`.
 - **Steps:**
   1. Remove the one field from the minimal object.
   2. Validate the object.
-- **Expected result:** Validation raises a Pydantic `ValidationError` in all 46 cases.
+- **Expected result:** Validation raises a Pydantic `ValidationError` in all 47 cases.
   The error names the removed field.
 - **What breaks this test:** A developer gives `Contract.invariants` the default `[]` to make a model response validate.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -148,7 +152,7 @@ A successful run has these entries, in this order, and a turn count of 2.
 - **Traces to:** `ARCHITECTURE.md` 7.1 `Entry`.
 - **Purpose:** Show that `source` and `entry_type` are closed sets.
 - **Fixture:** The minimal `Entry`, parametrised over 4 changes.
-  `source` = `MODEL` (raw Antigravity value), `source` = `assistant`, `entry_type` = `PLANNER_RESPONSE`, `entry_type` = `message`.
+  `source` = `assistant` (raw Claude Code value), `source` = `human`, `entry_type` = `tool_use` (raw block type), `entry_type` = `message`.
 - **Steps:**
   1. Apply the change.
   2. Validate the object.
@@ -184,18 +188,20 @@ A successful run has these entries, in this order, and a turn count of 2.
 - **What breaks this test:** A refactor to a plain class or dataclass with the default `[]`.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
-### TT-SCH-006 Candidate rejects an unknown triage status
+### TT-SCH-006 Candidate rejects unknown enum values
 
-- **Traces to:** `ARCHITECTURE.md` 7.1 `Candidate.triage_status`.
-- **Purpose:** Show that `triage_status` is a closed set of four values.
-- **Fixture:** The minimal `Candidate`, parametrised over the values `fix_at_source`, `reuse`, `CONTRACTED`, and `approved`.
+- **Traces to:** `ARCHITECTURE.md` 7.1 `Candidate.triage_status`, `Candidate.evidence_type`.
+- **Purpose:** Show that `triage_status` has six values and `evidence_type` has three values.
+- **Fixture:** The minimal `Candidate`, parametrised over 7 changes.
+  `triage_status` = `reuse`, `generate`, `CONTRACTED`, or `approved`.
+  `evidence_type` = `error-fix`, `user_correction`, or `plain`.
 - **Steps:**
-  1. Set `triage_status` to the value.
+  1. Apply the change.
   2. Validate the object.
-- **Expected result:** Validation fails in all 4 cases.
-  The values `pending`, `accepted`, `rejected`, and `clarification_needed` validate.
-- **What breaks this test:** A developer adds a fifth value without a change to `ARCHITECTURE.md`.
-  This test then fails and points to OQ-T04.
+- **Expected result:** Validation fails in all 7 cases.
+  The `triage_status` values `pending`, `accepted`, `reuse_existing`, `fix_at_source`, `rejected`, and `clarification_needed` validate.
+  The `evidence_type` values `correction`, `error_fix`, and `repetition` validate.
+- **What breaks this test:** A field type changes to `str`, so FIND can store a value that the ranking does not know.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-SCH-007 Candidate validates its nested Evidence
@@ -295,7 +301,7 @@ A successful run has these entries, in this order, and a turn count of 2.
 - **Purpose:** Show that a stored object loads back as an equal object.
 - **Fixture:** One full object for each of the 7 models, with every optional field set.
   `Entry.timestamp` and `Verdict.timestamp` are `2026-01-05T10:00:06Z`.
-  `Entry.args` is `{"CommandLine": "git status", "WaitMsBeforeAsync": 5000, "RunPersistent": true}`.
+  `Entry.args` is `{"command": "git status", "timeout": 5000, "run_in_background": true}`.
   `Verdict.token_delta_percent` is `-41.5`.
   Parametrised over the 7 models.
 - **Steps:**
@@ -311,65 +317,72 @@ A successful run has these entries, in this order, and a turn count of 2.
 
 ## Transcript parsing
 
-### TT-PAR-001 Map the three Antigravity step types to Entry fields
+The raw format is in `ARCHITECTURE.md` 3.2 and in "Claude Code transcript fixture format" of [FUNCTIONAL_TESTS.md](FUNCTIONAL_TESTS.md).
+`uuid` gives `entry_id` and `sessionId` gives `session_id`.
+The sources do not say how `step_index` is made (see OQ-T02), so the tests identify an entry by `entry_id`.
+
+### TT-PAR-001 Map the Claude Code line types and content blocks to Entry fields
 
 - **Traces to:** `ARCHITECTURE.md` 3.2, 7.1 `Entry`.
-- **Purpose:** Show the field mapping for one step of each raw type.
-- **Fixture:** The first three lines of `FX-AG-A`.
+- **Purpose:** Show the field mapping for a human message, a tool call, a tool result, and model prose.
+- **Fixture:** Lines 1, 4, and 5 of `FX-CC-A`, plus one `assistant` line `sess-a-L10` with one `text` block "The frontend is ready."
 - **Steps:**
-  1. Parse the three lines with the Antigravity parser of `maga.reader`.
-  2. Read the three `Entry` objects.
-- **Expected result:** Entry 0 has `source` `user`, `entry_type` `user_input`, and `content` "Start the web frontend."
-  Entry 1 has `source` `model`, `entry_type` `tool_call`, `tool_name` `run_command`, and `working_dir` `/home/dev_a/workspace`.
-  Entry 1 has `command_line` equal to the raw `CommandLine` value.
-  Entry 2 has `entry_type` `tool_result` and `exit_code` 0, read from "The command exited with code 0."
-  Each `timestamp` equals the raw `created_at` instant.
-  The mapping of `GENERIC` to `tool_result` is an assumption (see OQ-T02).
-- **What breaks this test:** The parser reads `args.command` and not `args.CommandLine`, so `command_line` is `None`.
+  1. Parse the four lines with the parser of `maga.reader`.
+  2. Read the four `Entry` objects.
+- **Expected result:** Entry `sess-a-L01` has `source` `user`, `entry_type` `user_input`, and `content` "Start the web frontend."
+  Entry `sess-a-L04` has `source` `model`, `entry_type` `tool_call`, and `tool_name` `Bash`.
+  Entry `sess-a-L04` has `command_line` equal to the raw `input.command` value and `working_dir` `/home/dev_a/workspace`.
+  Entry `sess-a-L05` has `entry_type` `tool_result` and `exit_code` 0.
+  Entry `sess-a-L10` has `source` `model` and `entry_type` `generic_message`.
+  Every entry has `session_id` `sess-a`, and each `timestamp` equals the raw `timestamp` instant.
+  The `source` value of a `tool_result` entry is not defined (see OQ-T02).
+- **What breaks this test:** The parser reads `message.content` as text only, so a line with content blocks gives no `command_line`.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-PAR-002 Preserve the original entry identifiers
 
-- **Traces to:** `ARCHITECTURE.md` 3.2 "monotonic integer `step_index`"; here.now architecture "Discovery, ranking, and long sessions" ("Preserve original entry IDs").
-- **Purpose:** Show that the parser keeps the raw identifier and does not number the entries again.
-- **Fixture:** A copy of `FX-AG-A` from which the lines with `step_index` 3 and 4 are removed.
-  The remaining raw values are 0, 1, 2, 5, 6.
+- **Traces to:** `ARCHITECTURE.md` 3.2 (`uuid` gives `Entry.entry_id`); here.now architecture "Discovery, ranking, and long sessions" ("Preserve original entry IDs").
+- **Purpose:** Show that the parser keeps the raw identifier and does not make a new one.
+- **Fixture:** `FX-CC-A`.
 - **Steps:**
-  1. Parse the file.
-  2. Read `step_index` and `entry_id` of each entry.
-- **Expected result:** The `step_index` values are 0, 1, 2, 5, 6.
-  The 5 `entry_id` values are unique.
-  A second parse of the same file gives the same 5 `entry_id` values.
-- **What breaks this test:** The parser sets `step_index` from the line number, which gives 0 to 4.
-  A random UUID for `entry_id` also breaks the test.
+  1. Parse the file two times.
+  2. Read `entry_id` and `step_index` of each entry.
+- **Expected result:** The 7 `entry_id` values equal the raw `uuid` values of the 7 imported lines.
+  Both parses give the same `entry_id` values.
+  The `step_index` values are unique, and they increase in file order.
+- **What breaks this test:** The parser makes a random UUID for `entry_id`.
+  A parser that uses the line number as `entry_id` also breaks the test.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
-### TT-PAR-003 Pair a tool call with its result
+### TT-PAR-003 Join a tool call with its result by tool_use_id
 
-- **Traces to:** `ARCHITECTURE.md` 3.2 "Tool execution results in subsequent `GENERIC` steps"; 5.1 rule 2 (needs the exit code of a command).
+- **Traces to:** `ARCHITECTURE.md` 3.2 ("`maga.reader` joins them by `tool_use_id`"); 5.1 rule 2 (needs the exit code of a command).
 - **Purpose:** Show that the exit code of a result attaches to the correct command.
-- **Fixture:** A session with two commands.
-  Command 1 is `vite` with the result "The command exited with code 1."
-  Command 2 is `vite --port 5174` with the result "The command exited with code 0."
-  One `USER_INPUT` step is between the first result and the second command.
+- **Fixture:** A session with two commands whose results arrive in the reverse order.
+  Line 2 is the `tool_use` `toolu_x_01` with the command `vite`.
+  Line 3 is the `tool_use` `toolu_x_02` with the command `vite --port 5174`.
+  Line 4 is the `tool_result` for `toolu_x_02` with `is_error` `false`.
+  Line 5 is a human message "continue".
+  Line 6 is the `tool_result` for `toolu_x_01` with `is_error` `true` and the content "Exit code 1\nPort 5173 is in use".
 - **Steps:**
   1. Parse the file.
   2. Request the paired view (command and result) from the reader or the finder (see OQ-T01).
 - **Expected result:** `vite` pairs with `exit_code` 1.
   `vite --port 5174` pairs with `exit_code` 0.
-  The `USER_INPUT` step pairs with nothing.
-- **What breaks this test:** The pairing takes "the next entry", so an inserted user step shifts the results by one.
+  The human message pairs with nothing.
+- **What breaks this test:** The pairing takes "the next `tool_result` line" and ignores `tool_use_id`.
+  That pairing gives `vite` the exit code 0.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-PAR-004 A malformed line
 
 - **Status:** `BLOCKED` by OQ-T03.
   The sources do not say if the reader skips and reports the line, or fails the import.
-- **Traces to:** here.now architecture "Contracts at each boundary", Reader ("mark missing data as unknown").
+- **Traces to:** `ARCHITECTURE.md` 5 (row 1: "marks missing data as unknown").
 - **Purpose:** Show that a malformed line never disappears without a report.
-- **Fixture:** `FX-AG-MALFORMED`.
+- **Fixture:** `FX-CC-MALFORMED`.
 - **Steps:**
-  1. Run the reader on `sess-m`.
+  1. Run READ on `sess-m.jsonl`.
   2. Read the import result and the stored entries.
 - **Expected result:** One of two results is correct, and the sources do not select one.
   Result 1: the import fails, names line 3, and stores no checkpoint past line 2.
@@ -378,31 +391,38 @@ A successful run has these entries, in this order, and a turn count of 2.
 - **What breaks this test:** A bare `except: continue` around the JSON parse, which drops line 3 with no report.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
-### TT-PAR-005 Mark missing data as unknown
+### TT-PAR-005 Parse the exit code and mark missing data as unknown
 
-- **Traces to:** here.now architecture "Contracts at each boundary", Reader; `ARCHITECTURE.md` 7.1 `Entry` optional fields.
-- **Purpose:** Show that the parser does not invent a value for absent data.
-- **Fixture:** One `GENERIC` result whose `content` is "Output:\nstill running" with no exit code text.
-  One `PLANNER_RESPONSE` whose `args` has `CommandLine` and no `Cwd`.
+- **Traces to:** `ARCHITECTURE.md` 3.2 (`tool_result`: "`is_error` marks a failure"), 5 (row 1: "marks missing data as unknown"), 7.1 `Entry` optional fields.
+- **Purpose:** Show the exit-code rule and show that the parser does not invent a value for absent data.
+- **Fixture:** Parametrised over 5 `tool_result` cases, each with its `tool_use` line.
+  Case 1: `is_error` `false`, content "Done".
+  Case 2: `is_error` `true`, content "Exit code 1\nPort 5173 is in use".
+  Case 3: `is_error` `true`, content "Exit code 127\ncommand not found".
+  Case 4: `is_error` `true`, content "Command timed out" with no `Exit code` text.
+  Case 5: a `tool_use` line with no `tool_result` line in the file, and with no `cwd` field.
 - **Steps:**
-  1. Parse the two lines.
-  2. Read `exit_code` of the result entry and `working_dir` of the call entry.
-- **Expected result:** `exit_code` is `None`.
-  `working_dir` is `None`.
+  1. Parse the lines.
+  2. Read `exit_code` of the result, or of the paired view for case 5.
+  3. Read `working_dir` of the call entry in case 5.
+- **Expected result:** The exit codes are 0, 1, and 127 for cases 1, 2, and 3.
+  The exit code is `None` for cases 4 and 5.
+  `working_dir` is `None` in case 5.
 - **What breaks this test:** The parser sets `exit_code` to 0 when it finds no exit code.
   That default turns an unknown result into a success for the error-and-fix rule.
+  A parser that sets 1 for every `is_error` result fails case 3.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-PAR-006 Import once
 
-- **Traces to:** `ARCHITECTURE.md` 3.2, 7 (`import_checkpoints.json`); here.now architecture "Contracts at each boundary", Reader ("import each entry once").
+- **Traces to:** `ARCHITECTURE.md` 2.1 (`READ`: "Reads new transcript entries once"), 7 (`import_checkpoints.json`).
 - **Purpose:** Show idempotent import at the storage boundary.
-- **Fixture:** `FX-AG-A`.
+- **Fixture:** `FX-CC-A`.
 - **Steps:**
-  1. Run the reader three times on `sess-a`.
-  2. Read `.maga/state/entries/sess-a.json` and count the entries for each `step_index`.
+  1. Run READ three times on `sess-a.jsonl`.
+  2. Read `.maga/state/entries/sess-a.json` and count the entries for each `entry_id`.
 - **Expected result:** The file has 7 entries.
-  Each `step_index` from 0 to 6 appears one time.
+  Each of the 7 `entry_id` values appears one time.
   Runs 2 and 3 report 0 new entries.
 - **What breaks this test:** The checkpoint is written before the entries, and the entries write then appends on each run.
 - **Level and needs:** Integration. No network, no model, no container, no human.
@@ -413,32 +433,33 @@ A successful run has these entries, in this order, and a turn count of 2.
   `Entry` has no field for a part link, and the sources define no size limit.
 - **Traces to:** here.now architecture "Discovery, ranking, and long sessions" ("Split oversized results into linked parts rather than silently dropping content").
 - **Purpose:** Show that a large result loses no content.
-- **Fixture:** `FX-AG-OVERSIZE`.
+- **Fixture:** `FX-CC-OVERSIZE`.
   The test sets the size limit to a value that forces a minimum of 3 parts.
 - **Steps:**
-  1. Run the reader and the chunker on `sess-o`.
+  1. Run READ and the chunker on `sess-o.jsonl`.
   2. Collect the parts of the result in order.
   3. Join the part texts.
 - **Expected result:** The result has a minimum of 3 parts.
   The joined text contains each of `LINE-0001` to `LINE-2000` one time and in order.
-  Each part refers to the same source `step_index`.
+  Each part refers to the `entry_id` of the source line.
   The field that links the parts is not defined.
 - **What breaks this test:** The reader truncates the result at the limit and adds "[truncated]".
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
-### TT-PAR-008 Parse a Claude Code transcript
+### TT-PAR-008 Skip bookkeeping lines and thinking blocks
 
-- **Status:** `BLOCKED` by OQ-T02.
-  The sources give no raw line schema for `~/.claude/projects/*/*.jsonl`.
-- **Traces to:** `ARCHITECTURE.md` 2.2 decision 1, 5 (row 1).
-- **Purpose:** Show the field mapping for the primary transcript format.
-- **Fixture:** Not defined.
+- **Traces to:** `ARCHITECTURE.md` 3.2 (line schema table; `thinking`: "`maga.reader` drops it").
+- **Purpose:** Show that the reader imports `user` and `assistant` lines only, and no model reasoning.
+- **Fixture:** `FX-CC-A`, plus one line of each of these types, each with the marker `BOOKKEEPING_MARKER_002` in a text field.
+  The types are `attachment`, `file-history-snapshot`, `queue-operation`, `mode`, and `ai-title`.
 - **Steps:**
-  1. Parse one user line, one tool-call line, and one tool-result line.
-  2. Read the three `Entry` objects.
-- **Expected result:** The three entries validate, with `entry_type` `user_input`, `tool_call`, and `tool_result`.
-  The raw field names are not defined.
-- **What breaks this test:** Only the Antigravity parser exists.
+  1. Run READ.
+  2. Read the stored entries and search all stored text for the markers.
+- **Expected result:** The file has 7 entries.
+  No entry has the `entry_id` of the `system` line, of the `thinking` line, or of an added line.
+  No stored text contains `BOOKKEEPING_MARKER_001`, `BOOKKEEPING_MARKER_002`, or `THINKING_MARKER_001`.
+- **What breaks this test:** The reader has a list of types to skip and not a list of types to import.
+  A type that is not in the skip list, such as `ai-title`, then becomes an entry.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ## Normalisation
@@ -449,10 +470,9 @@ Several tests compare two normalised results and do not assert a literal placeho
 
 ### TT-NRM-001 Normalise an absolute path to a repository token
 
-- **Traces to:** `ARCHITECTURE.md` 5.1 rule 4 "File & Directory Paths".
+- **Traces to:** `ARCHITECTURE.md` 5.1 rule 4 "File & Directory Paths"; 3.2 (`cwd` "gives `$REPO_ROOT` for path normalisation").
 - **Purpose:** Show the documented path example.
-- **Fixture:** The command `ls /home/user/workspace/apps/web` with the working directory `/home/user/workspace`.
-  The rule that finds the repository root is not defined (see OQ-T06), so the working directory equals the root.
+- **Fixture:** The command `ls /home/user/workspace/apps/web` on a line whose `cwd` is `/home/user/workspace`.
 - **Steps:**
   1. Normalise the command.
 - **Expected result:** The result is `ls $REPO_ROOT/apps/web`.
@@ -540,13 +560,13 @@ Several tests compare two normalised results and do not assert a literal placeho
 
 - **Traces to:** here.now architecture "Discovery, ranking, and long sessions" ("Keep original entries").
 - **Purpose:** Show that normalisation produces a new value and does not change stored data.
-- **Fixture:** `FX-AG-A`, `FX-AG-B`, `FX-AG-C`.
+- **Fixture:** `FX-CC-A`, `FX-CC-B`, `FX-CC-C`.
 - **Steps:**
-  1. Run the reader.
+  1. Run READ.
   2. Record a hash of each file in `.maga/state/entries/`.
   3. Run FIND.
   4. Record the hashes again.
-  5. Read `command_line` of the entry with `step_index` 3 in `sess-b`.
+  5. Read `command_line` of the entry `sess-b-L06`.
 - **Expected result:** The hashes are equal before and after FIND.
   `command_line` contains `/home/dev_b/projects/repo/apps/web` and `5174`.
 - **What breaks this test:** FIND normalises in place and writes the entries back.
@@ -609,9 +629,9 @@ The fixtures use contiguous sequences of three commands, so both readings give t
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 1.
 - **Purpose:** Show the upper side of the threshold boundary.
-- **Fixture:** `FX-AG-A`, `FX-AG-B`, `FX-AG-C`.
+- **Fixture:** `FX-CC-A`, `FX-CC-B`, `FX-CC-C`.
 - **Steps:**
-  1. Run the reader.
+  1. Run READ.
   2. Run the sequence counter of `maga.finder` with no model.
   3. Read the flagged sequences.
 - **Expected result:** One sequence is flagged and it is the normalised P1 sequence.
@@ -623,21 +643,21 @@ The fixtures use contiguous sequences of three commands, so both readings give t
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 1.
 - **Purpose:** Show the lower side of the threshold boundary.
-- **Fixture:** `FX-AG-TWO`.
+- **Fixture:** `FX-CC-TWO`.
 - **Steps:**
-  1. Run the reader and the sequence counter.
+  1. Run READ and the sequence counter.
   2. Read the flagged sequences.
 - **Expected result:** No sequence is flagged.
-- **What breaks this test:** The threshold constant is 2, as the diagram in `ARCHITECTURE.md` 4 states (see SC-T03).
+- **What breaks this test:** The threshold constant is 2 and not 3.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-SEQ-003 Many repeats in one session do not reach the threshold
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 1 ("distinct sessions").
 - **Purpose:** Show that the counter counts sessions.
-- **Fixture:** `FX-AG-ONE` (P1 five times in `sess-d`).
+- **Fixture:** `FX-CC-ONE` (P1 five times in `sess-d`).
 - **Steps:**
-  1. Run the reader and the sequence counter.
+  1. Run READ and the sequence counter.
   2. Read the flagged sequences.
 - **Expected result:** No sequence is flagged.
 - **What breaks this test:** The counter adds 1 for each occurrence and not for each session.
@@ -645,25 +665,27 @@ The fixtures use contiguous sequences of three commands, so both readings give t
 
 ### TT-SEQ-004 Repeats in one session plus two other sessions
 
-- **Traces to:** `ARCHITECTURE.md` 5.1 rule 1; 7.1 `Evidence.session_ids`.
+- **Traces to:** `ARCHITECTURE.md` 5.1 rule 1; 7.1 `Evidence.session_ids`, `Candidate.frequency` ("Distinct sessions").
 - **Purpose:** Show that a repeat in one session does not change the session list.
-- **Fixture:** `FX-AG-ONE` (5 occurrences in `sess-d`), `FX-AG-A`, and `FX-AG-B`.
+- **Fixture:** `FX-CC-ONE` (5 occurrences in `sess-d`), `FX-CC-A`, and `FX-CC-B`.
 - **Steps:**
-  1. Run the reader and FIND with the stub model.
+  1. Run READ and FIND with the stub model.
   2. Read the candidate.
 - **Expected result:** One candidate exists.
   `evidence.session_ids` has 3 entries: `sess-a`, `sess-b`, `sess-d`, each one time.
-  The values of `frequency` and `evidence.observed_occurrences` (3 or 7) are not defined (see OQ-T08).
+  `frequency` is 3, because `frequency` counts distinct sessions.
+  The value of `evidence.observed_occurrences` (3 or 7) is not defined (see OQ-T08).
 - **What breaks this test:** `session_ids` is a list with one entry for each occurrence, so `sess-d` appears 5 times.
+  A `frequency` that counts occurrences gives 7.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
 
 ### TT-SEQ-005 The same session imported from two locations counts one time
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 1 ("distinct sessions"); here.now architecture "Discovery, ranking, and long sessions" ("remove duplicate evidence by source reference").
 - **Purpose:** Show that a copied transcript does not create a false third session.
-- **Fixture:** `FX-AG-A`, `FX-AG-B`, and a second copy of the `sess-a` directory with the same session ID in a different parent directory.
+- **Fixture:** `FX-CC-A`, `FX-CC-B`, and a second copy of `sess-a.jsonl` with the same `sessionId` in a different project directory.
 - **Steps:**
-  1. Run the reader on both parent directories.
+  1. Run READ on both project directories.
   2. Run the sequence counter.
 - **Expected result:** No sequence is flagged.
   The distinct-session count for P1 is 2.
@@ -674,9 +696,9 @@ The fixtures use contiguous sequences of three commands, so both readings give t
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 1 ("identical normalised command sequence").
 - **Purpose:** Show that the counter compares ordered sequences.
-- **Fixture:** `FX-AG-A`, `FX-AG-B`, and a session `sess-r` with the three P1 commands in reverse order.
+- **Fixture:** `FX-CC-A`, `FX-CC-B`, and a session `sess-r` with the three P1 commands in reverse order.
 - **Steps:**
-  1. Run the reader and the sequence counter.
+  1. Run READ and the sequence counter.
   2. Read the flagged sequences.
 - **Expected result:** The P1 sequence of three commands is not flagged.
 - **What breaks this test:** The counter compares sorted command sets.
@@ -686,21 +708,38 @@ The fixtures use contiguous sequences of three commands, so both readings give t
 
 - **Traces to:** here.now one-pager "The idea" ("Count command sequences without a model"); here.now architecture "Discovery, ranking, and long sessions".
 - **Purpose:** Show that the first discovery step is deterministic and costs no tokens.
-- **Fixture:** `FX-AG-A`, `FX-AG-B`, `FX-AG-C`.
+- **Fixture:** `FX-CC-A`, `FX-CC-B`, `FX-CC-C`.
   A stub model that fails the test when it receives a request.
 - **Steps:**
-  1. Run the reader and the sequence counter two times.
+  1. Run READ and the sequence counter two times.
   2. Compare the two results.
 - **Expected result:** The stub model receives no request.
   The two results are equal.
 - **What breaks this test:** The counter asks a model to decide if two commands are "the same".
 - **Level and needs:** Unit. No network, no container, no human.
 
+### TT-SEQ-008 Ranking order and tie-break
+
+- **Traces to:** `ARCHITECTURE.md` 5.1 rule 5; 7.1 `Candidate.evidence_type`, `Candidate.frequency`.
+- **Purpose:** Show the three sort keys of the ranking function.
+- **Fixture:** Six minimal `Candidate` objects, given to the ranking function in this order.
+  `cand_f` (`repetition`, `frequency` 9), `cand_e` (`repetition`, `frequency` 3), `cand_d` (`error_fix`, `frequency` 3).
+  `cand_c` (`error_fix`, `frequency` 4), `cand_b` (`correction`, `frequency` 3), `cand_a` (`correction`, `frequency` 3).
+- **Steps:**
+  1. Rank the six candidates.
+  2. Rank the same candidates again in the reverse input order.
+- **Expected result:** Both results are `cand_a`, `cand_b`, `cand_c`, `cand_d`, `cand_f`, `cand_e`.
+- **What breaks this test:** A sort by `frequency` first puts `cand_f` at the top.
+  A sort with no `candidate_id` key keeps the input order of `cand_a` and `cand_b`, so the two results differ.
+  An ascending `frequency` key puts `cand_d` before `cand_c`.
+- **Level and needs:** Unit. No network, no model, no container, no human.
+
 ## Error-and-fix pair detection
 
 The rule is in `ARCHITECTURE.md` 5.1 rule 2.
 A pair is a failed step, followed within 3 subsequent tool actions by a command with modified parameters or flags that exits 0.
-Each fixture below is a list of commands with exit codes, written as one Antigravity session.
+Each fixture below is a list of commands with exit codes, written as one Claude Code session.
+A command with a non-zero exit code has `is_error` `true` and the content "Exit code N".
 
 ### TT-EFX-001 Detect the documented example
 
@@ -708,7 +747,7 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 - **Purpose:** Show the positive case from the source.
 - **Fixture:** `vite` (exit 1), `lsof -i :5173` (exit 0), `vite --port 5174` (exit 0).
 - **Steps:**
-  1. Run the reader and the error-and-fix detector.
+  1. Run READ and the error-and-fix detector.
   2. Read the detected pairs.
 - **Expected result:** One pair is detected.
   The error step is `vite` and the fix step is `vite --port 5174`.
@@ -721,7 +760,7 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 - **Purpose:** Show the inner side of the distance boundary.
 - **Fixture:** `vite` (exit 1), `lsof -i :5173` (exit 0), `cat packages/config/ports.json` (exit 0), `vite --port 5174` (exit 0).
 - **Steps:**
-  1. Run the reader and the detector.
+  1. Run READ and the detector.
 - **Expected result:** One pair is detected: `vite` and `vite --port 5174`.
 - **What breaks this test:** The window is 2 actions.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -732,7 +771,7 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 - **Purpose:** Show the outer side of the distance boundary.
 - **Fixture:** `vite` (exit 1), `lsof -i :5173` (exit 0), `cat packages/config/ports.json` (exit 0), `git status` (exit 0), `vite --port 5174` (exit 0).
 - **Steps:**
-  1. Run the reader and the detector.
+  1. Run READ and the detector.
 - **Expected result:** No pair is detected.
 - **What breaks this test:** The window has no upper limit.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -743,7 +782,7 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 - **Purpose:** Show that the fix must change the command.
 - **Fixture:** `vite` (exit 1), `vite` (exit 0).
 - **Steps:**
-  1. Run the reader and the detector.
+  1. Run READ and the detector.
 - **Expected result:** No pair is detected.
 - **What breaks this test:** The detector accepts any later command with the same program name and exit code 0.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -753,9 +792,9 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 2 ("and exiting 0").
 - **Purpose:** Show that the fix must succeed.
 - **Fixture:** `vite` (exit 1), `vite --port 5174` (exit 1).
-  A second variant in which the result of `vite --port 5174` has no exit code text.
+  A second variant in which the result of `vite --port 5174` has `is_error` `true` and no `Exit code` text.
 - **Steps:**
-  1. Run the reader and the detector on each variant.
+  1. Run READ and the detector on each variant.
 - **Expected result:** No pair is detected in either variant.
 - **What breaks this test:** The detector checks `exit_code != 1`, so an unknown exit code counts as a success.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -766,9 +805,9 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
   The rule says "non-zero exit code or stderr error pattern", but no source lists the patterns.
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 2.
 - **Purpose:** Show that a failed step with exit code 0 can start a pair.
-- **Fixture:** `vite` (exit 0, output "error: Port 5173 is in use"), `vite --port 5174` (exit 0).
+- **Fixture:** `vite` (`is_error` `false`, content "error: Port 5173 is in use"), `vite --port 5174` (exit 0).
 - **Steps:**
-  1. Run the reader and the detector.
+  1. Run READ and the detector.
 - **Expected result:** Not defined until the pattern list exists.
 - **What breaks this test:** When the pattern list exists: a detector that reads `exit_code` only and ignores the output text.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -779,10 +818,10 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 3.
 - **Purpose:** Show that the defect is the agent step before the user message.
-- **Fixture:** One session of `FX-AG-CORR` (procedure P3).
+- **Fixture:** One session of `FX-CC-CORR` (procedure P3).
   The stub model classifies the message as a correction.
 - **Steps:**
-  1. Run the reader and the correction detector.
+  1. Run READ and the correction detector.
   2. Read the detected corrections.
 - **Expected result:** One correction is detected.
   The flagged step has `command_line` `kill -9 4242`.
@@ -794,22 +833,22 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 3 ("explicitly intervenes with a corrective instruction").
 - **Purpose:** Show the negative case.
-- **Fixture:** A session with `pnpm test` (exit 0), the `USER_INPUT` "Thanks. Now run the linter.", and `pnpm lint` (exit 0).
+- **Fixture:** A session with `pnpm test` (exit 0), the human message "Thanks. Now run the linter.", and `pnpm lint` (exit 0).
   The stub model classifies the message as not a correction.
 - **Steps:**
-  1. Run the reader and the correction detector.
+  1. Run READ and the correction detector.
 - **Expected result:** No correction is detected and no step is flagged as a defect.
-- **What breaks this test:** The detector treats every mid-session `USER_INPUT` as a correction.
+- **What breaks this test:** The detector treats every mid-session human message as a correction.
 - **Level and needs:** Unit. Stub model. No network, no container, no human.
 
 ### TT-COR-003 A model rejection stops the promotion
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 3 ("semantically validated using Gemini prompt classification before candidate promotion").
 - **Purpose:** Show that the model classification is a gate and not a log entry.
-- **Fixture:** `FX-AG-CORR` (3 sessions).
+- **Fixture:** `FX-CC-CORR` (3 sessions).
   The stub model classifies the message "don't kill that process" as not a correction.
 - **Steps:**
-  1. Run the reader and FIND.
+  1. Run READ and FIND.
   2. Read the candidates directory.
 - **Expected result:** No candidate exists that has the correction as evidence.
 - **What breaks this test:** FIND uses a keyword match on "don't" and ignores the classification result.
@@ -819,13 +858,30 @@ Each fixture below is a list of commands with exit codes, written as one Antigra
 
 - **Traces to:** `ARCHITECTURE.md` 5.1 rule 3 ("uses the correction to formulate negative constraints and invariants in the contract").
 - **Purpose:** Show that the correction text is an input to contract synthesis.
-- **Fixture:** `FX-AG-CORR` with the stub model as classifier and as contract synthesiser.
+- **Fixture:** `FX-CC-CORR` with the stub model as classifier and as contract synthesiser.
 - **Steps:**
-  1. Run the reader, FIND, and TRIAGE.
+  1. Run READ, FIND, and DECIDE.
   2. Read the contract synthesis request that the stub model recorded.
 - **Expected result:** The request contains the correction "don't kill that process" or the candidate's pitfall record of it.
-- **What breaks this test:** TRIAGE sends only `command_sequence` to the synthesiser.
+- **What breaks this test:** DECIDE sends only `command_sequence` to the synthesiser.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
+
+### TT-COR-005 A tool-result line is never a correction candidate
+
+- **Traces to:** `ARCHITECTURE.md` 3.2 ("A `user` line whose content is only `tool_result` blocks is not a human message, so it is never a correction candidate").
+- **Purpose:** Show that the detector reads human messages only.
+- **Fixture:** A session with `kill -9 4242` and its `tool_result`, and then `lsof -i :5173` and its `tool_result`.
+  The content of the first `tool_result` is "don't kill that process".
+  The session has no human message after line 1.
+  A stub model that classifies every text as a correction.
+- **Steps:**
+  1. Run READ and the correction detector.
+  2. Read the detected corrections and the requests that the stub model recorded.
+- **Expected result:** No correction is detected and no step is flagged as a defect.
+  The stub model received no request that contains "don't kill that process".
+  The entry of that line has `entry_type` `tool_result`.
+- **What breaks this test:** The detector selects lines by `type` `user` or by `message.role` `user`.
+- **Level and needs:** Unit. Stub model. No network, no container, no human.
 
 ## Chunking
 
@@ -838,9 +894,9 @@ Each test measures tokens with the token counter of the implementation.
 
 - **Traces to:** here.now architecture "Discovery, ranking, and long sessions" ("A chunk is a bounded group of transcript entries. Split by token budget").
 - **Purpose:** Show that the budget is an upper limit.
-- **Fixture:** `FX-AG-LONG`, with a budget that is about one quarter of the token count of the session.
+- **Fixture:** `FX-CC-LONG`, with a budget that is about one quarter of the token count of the session.
 - **Steps:**
-  1. Run the reader and the chunker.
+  1. Run READ and the chunker.
   2. Count the tokens of each chunk.
 - **Expected result:** The chunker returns a minimum of 4 chunks.
   The token count of each chunk is less than or equal to the budget.
@@ -853,9 +909,9 @@ Each test measures tokens with the token counter of the implementation.
 - **Purpose:** Show that the union of the chunks equals the session.
 - **Fixture:** As TT-CHK-001.
 - **Steps:**
-  1. Collect the `step_index` values of all chunks.
-  2. Compare the set with the `step_index` values of the session.
-- **Expected result:** The two sets are equal (81 entries: 1 user step, 40 calls, 40 results).
+  1. Collect the `entry_id` values of all chunks.
+  2. Compare the set with the `entry_id` values of the session.
+- **Expected result:** The two sets are equal (81 entries: 1 human message, 40 calls, 40 results).
 - **What breaks this test:** The chunker drops the entry that crosses a budget boundary.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
@@ -881,7 +937,7 @@ Each test measures tokens with the token counter of the implementation.
   1. For each chunk after the first, read its first entries.
   2. Compare them with the last entries of the chunk before.
 - **Expected result:** Each chunk after the first starts with the last call and result pair of the chunk before.
-  The entries in the overlap keep their original `step_index` values.
+  The entries in the overlap keep their original `entry_id` values.
   The content of the "short summary of unfinished tasks" is not defined (see OQ-T11).
 - **What breaks this test:** The overlap setting is read but not applied.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -890,24 +946,24 @@ Each test measures tokens with the token counter of the implementation.
 
 - **Traces to:** here.now architecture "Discovery, ranking, and long sessions" ("Join task fragments and remove duplicate evidence by source reference").
 - **Purpose:** Show that the overlap does not count one entry two times.
-- **Fixture:** `FX-AG-A`, `FX-AG-B`, and one long session in which P1 occurs one time across a chunk boundary.
+- **Fixture:** `FX-CC-A`, `FX-CC-B`, and one long session in which P1 occurs one time across a chunk boundary.
   The overlap makes the P1 commands appear in two chunks of that session.
 - **Steps:**
-  1. Run the reader, the chunker, and FIND with the stub model.
+  1. Run READ, the chunker, and FIND with the stub model.
   2. Read the candidate for P1.
 - **Expected result:** `evidence.session_ids` has 3 entries.
   The long session contributes one occurrence of P1 and not two.
-- **What breaks this test:** Evidence is keyed by chunk number and not by `session_id` plus `step_index`.
+- **What breaks this test:** Evidence is keyed by chunk number and not by `entry_id`.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
 
 ### TT-CHK-006 No model request contains the whole transcript
 
 - **Traces to:** here.now architecture "Discovery, ranking, and long sessions" ("Do not send the whole transcript in one request", "Retrieve only the source excerpts needed for each candidate").
 - **Purpose:** Show that model input is bounded.
-- **Fixture:** `FX-AG-LONG` three times with different session IDs, so that a candidate exists.
+- **Fixture:** `FX-CC-LONG` three times with different session IDs, so that a candidate exists.
   Each of the 40 commands has a unique text `echo step-NN`.
 - **Steps:**
-  1. Run the reader and FIND with the stub model.
+  1. Run READ and FIND with the stub model.
   2. For each recorded request, count how many of the 40 unique texts of one session it contains.
 - **Expected result:** No request contains all 40 texts of one session.
   The token count of each request is less than or equal to the budget that the test set.
@@ -942,9 +998,9 @@ No test file contains a complete secret-shaped literal.
 - **Purpose:** Show that no field is a bypass.
 - **Fixture:** Parametrised over the fields `command_line`, `content`, `sanitized_output`, and `args`.
   The raw line places the `API_KEY=` secret so that it lands in the one field.
-  For `args`, the secret is the value of the key `Env` inside the raw `args` object.
+  For `args`, the secret is the value of the key `description` inside the raw `input` object of the `tool_use` block.
 - **Steps:**
-  1. Run the reader on the line.
+  1. Run READ on the line.
   2. Serialise the stored `Entry` to JSON text.
 - **Expected result:** The JSON text does not contain `FAKE_SECRET_VALUE_001` in any of the 4 cases.
 - **What breaks this test:** The redactor handles text fields only, and `args` is a dictionary that it does not walk.
@@ -1022,9 +1078,9 @@ No test file contains a complete secret-shaped literal.
 
 - **Traces to:** here.now one-pager "Keep control" ("Treat transcripts as data, never as instructions").
 - **Purpose:** Show the deterministic part of the prompt-injection defence.
-- **Fixture:** `FX-AG-INJECT`, whose tool result contains the marker `INJECTION_CANARY`.
+- **Fixture:** `FX-CC-INJECT`, whose tool result contains the marker `INJECTION_CANARY`.
 - **Steps:**
-  1. Run the reader, FIND, and TRIAGE with the stub model.
+  1. Run READ, FIND, and DECIDE with the stub model.
   2. For each recorded request, separate the instruction part from the user-content part.
   3. Search the instruction part for `INJECTION_CANARY`.
 - **Expected result:** No instruction part contains `INJECTION_CANARY`.
@@ -1048,7 +1104,7 @@ No test file contains a complete secret-shaped literal.
   `.maga/state/candidates/<candidate_id>.json`.
   `.maga/state/contracts/<candidate_id>.json`.
   `.maga/state/verification/<candidate_id>_verdict.json`.
-  `.maga/artifacts/staged/<candidate_id>/SKILL.md`, `scripts/start.sh`, and `tests/test_start.py`.
+  `.maga/artifacts/staged/<candidate_id>/SKILL.md`, `scripts/start.py`, and `tests/test_start.py`.
   Each JSON file validates against its model.
   No file with the extension `.db` or `.sqlite` exists.
 - **What breaks this test:** A stage keeps its records in memory and writes nothing.
@@ -1056,49 +1112,48 @@ No test file contains a complete secret-shaped literal.
 
 ### TT-STO-002 Resume from a checkpoint after an interrupted import
 
-- **Traces to:** `ARCHITECTURE.md` 3.2 ("incremental using monotonic integer `step_index` watermarks"), 7 (`import_checkpoints.json`).
+- **Traces to:** `ARCHITECTURE.md` 5 (row 1: "tracks incremental session watermarks"), 7 (`import_checkpoints.json`).
 - **Purpose:** Show that an interrupted import completes on the next run with no loss and no duplicate.
-- **Fixture:** `FX-AG-LONG` (81 lines).
-  The test makes the entry store raise an error when it receives the entry with `step_index` 40.
+- **Fixture:** `FX-CC-LONG` (81 lines).
+  The test makes the entry store raise an error when it receives the entry `sess-l-L41`.
 - **Steps:**
-  1. Run the reader and observe the error.
+  1. Run READ and observe the error.
   2. Remove the injected error.
-  3. Run the reader again.
+  3. Run READ again.
   4. Read `.maga/state/entries/sess-l.json`.
 - **Expected result:** Step 1 reports a failure and not a success.
   After step 3 the file has 81 entries.
-  Each `step_index` from 0 to 80 appears one time.
+  Each `entry_id` from `sess-l-L01` to `sess-l-L81` appears one time.
 - **What breaks this test:** The checkpoint is written before the entries.
-  The second run then starts after `step_index` 40, and the entries from the failed batch are lost.
+  The second run then starts after the failed entry, and the entries from the failed batch are lost.
 - **Level and needs:** Integration. No network, no model, no container, no human.
 
 ### TT-STO-003 The checkpoint is per session
 
 - **Traces to:** `ARCHITECTURE.md` 7 ("Ingest watermarks per session").
 - **Purpose:** Show that the watermark of one session does not hide entries of another session.
-- **Fixture:** `FX-AG-LONG` (`step_index` up to 80) and `FX-AG-A` (`step_index` up to 6).
+- **Fixture:** `FX-CC-LONG` (81 lines) and `FX-CC-A` (9 lines).
 - **Steps:**
-  1. Run the reader on `sess-l` only.
-  2. Run the reader on `sess-l` and `sess-a`.
+  1. Run READ on `sess-l` only.
+  2. Run READ on `sess-l` and `sess-a`.
   3. Read `.maga/state/entries/sess-a.json`.
 - **Expected result:** `sess-a.json` has 7 entries.
-- **What breaks this test:** One global watermark of 80, which makes every `sess-a` entry look old.
+- **What breaks this test:** One global watermark, which makes every `sess-a` line look old after the import of `sess-l`.
 - **Level and needs:** Integration. No network, no model, no container, no human.
 
 ### TT-STO-004 State is below the gitignored directory
 
-- **Traces to:** `AGENTS.md` 2.2 ("All state is persisted as local JSON files under `.maga/state/` (gitignored)").
+- **Traces to:** `ARCHITECTURE.md` 7 ("`.maga/` is gitignored"); `AGENTS.md` 2.2.
 - **Purpose:** Show that Git cannot pick up state files.
-- **Fixture:** A clone of the MAGA repository, and `FX-AG-A`.
+- **Fixture:** A clone of the MAGA repository, and `FX-CC-A`.
 - **Steps:**
-  1. Run `git check-ignore -q .maga/state/entries/sess-a.json` in the clone.
-  2. Run the reader on `sess-a` with the clone as the project directory.
+  1. Run `git check-ignore -q` for `.maga/state/entries/sess-a.json` and for `.maga/artifacts/staged/x/SKILL.md` in the clone.
+  2. Run READ on `sess-a` with the clone as the project directory.
   3. Run `git status --porcelain --untracked-files=all`.
   4. Compare the list of all files in the clone before and after step 2.
-- **Expected result:** `git check-ignore` exits with code 0.
+- **Expected result:** `git check-ignore` exits with code 0 for both paths.
   `git status` prints no path that starts with `.maga/`.
   Every new file is below `.maga/`.
-  The sources do not say if `.maga/artifacts/` is ignored (see OQ-T13).
 - **What breaks this test:** The `.gitignore` entry is absent, or the reader writes a cache file next to the source code.
 - **Level and needs:** Integration. Git. No network, no model, no container, no human.
 
@@ -1108,37 +1163,40 @@ No test file contains a complete secret-shaped literal.
 - **Purpose:** Show that a stage validates what it loads.
 - **Fixture:** A valid candidate file in which `evidence.session_ids` is changed to `null`.
 - **Steps:**
-  1. Run TRIAGE for the candidate.
-- **Expected result:** TRIAGE fails with a validation error that names `evidence.session_ids`.
+  1. Run DECIDE for the candidate.
+- **Expected result:** DECIDE fails with a validation error that names `evidence.session_ids`.
   The stub model receives no request.
 - **What breaks this test:** The loader uses `model_construct` or a plain `json.load` with no validation.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
 
 ## Candidate state machine
 
-`ARCHITECTURE.md` 6 defines 13 states.
-The states are `DISCOVERED`, `TRIAGED`, `REJECTED`, `CLARIFICATION_REQUESTED`, `CONTRACTED`, `GENERATING`, `VALIDATING`, `REVISING`, `UNVERIFIED`, `EVALUATING_REUSE`, `PROPOSED`, `HUMAN_APPROVED`, and `MERGED`.
+`ARCHITECTURE.md` 6 defines 18 states.
+The states are `DISCOVERED`, `DECIDED`, `REJECTED`, `CLARIFICATION_REQUESTED`, `FIX_AT_SOURCE`, `REUSE_EXISTING`, `CONTRACTED`, `APPROVED`, `GENERATING`, `VALIDATING`, `REVISING`, `UNVERIFIED`, `INCONCLUSIVE`, `EVALUATING_REUSE`, `PACKAGE_APPROVAL`, `PROPOSED`, `HUMAN_APPROVED`, and `MERGED`.
 No schema in `ARCHITECTURE.md` 7.1 has a field for the state (see OQ-T14).
 
 ### TT-STM-001 Every legal transition is accepted
 
 - **Traces to:** `ARCHITECTURE.md` 6, state diagram.
 - **Purpose:** Show that the implementation permits each documented transition.
-- **Fixture:** Parametrised over the 16 transitions between named states.
-  `DISCOVERED` to `TRIAGED`.
-  `TRIAGED` to `REJECTED`, `TRIAGED` to `CLARIFICATION_REQUESTED`, `TRIAGED` to `CONTRACTED`.
-  `CONTRACTED` to `GENERATING`.
+- **Fixture:** Parametrised over the 25 transitions between named states.
+  `DISCOVERED` to `DECIDED`.
+  `DECIDED` to `REJECTED`, `CLARIFICATION_REQUESTED`, `FIX_AT_SOURCE`, `REUSE_EXISTING`, and `CONTRACTED`.
+  `REUSE_EXISTING` to `CONTRACTED`.
+  `CONTRACTED` to `APPROVED` and `REJECTED`.
+  `APPROVED` to `GENERATING`.
   `GENERATING` to `VALIDATING`.
-  `VALIDATING` to `REVISING`, `VALIDATING` to `UNVERIFIED`, `VALIDATING` to `EVALUATING_REUSE`.
-  `EVALUATING_REUSE` to `REVISING`, `EVALUATING_REUSE` to `UNVERIFIED`, `EVALUATING_REUSE` to `PROPOSED`.
+  `VALIDATING` to `REVISING`, `UNVERIFIED`, `INCONCLUSIVE`, and `EVALUATING_REUSE`.
+  `EVALUATING_REUSE` to `REVISING`, `UNVERIFIED`, `INCONCLUSIVE`, and `PACKAGE_APPROVAL`.
   `REVISING` to `GENERATING`.
-  `PROPOSED` to `HUMAN_APPROVED`, `PROPOSED` to `REJECTED`.
+  `PACKAGE_APPROVAL` to `PROPOSED` and `REJECTED`.
+  `PROPOSED` to `HUMAN_APPROVED` and `REJECTED`.
   `HUMAN_APPROVED` to `MERGED`.
 - **Steps:**
   1. Create a candidate in the source state with the guard data that the transition needs.
   2. Request the transition.
   3. Read the state.
-- **Expected result:** The state equals the target state in all 16 cases.
+- **Expected result:** The state equals the target state in all 25 cases.
   A new candidate starts in `DISCOVERED`.
 - **What breaks this test:** A transition table that omits `EVALUATING_REUSE` to `REVISING`, so a Gate 2 failure cannot use the budget.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -1147,8 +1205,8 @@ No schema in `ARCHITECTURE.md` 7.1 has a field for the state (see OQ-T14).
 
 - **Traces to:** `ARCHITECTURE.md` 6, state diagram.
 - **Purpose:** Show that the documented transitions are the only transitions.
-- **Fixture:** Parametrised over every ordered pair of the 13 states that is not in TT-STM-001.
-  This gives 153 pairs (169 pairs minus 16 legal pairs), and it includes each state to itself.
+- **Fixture:** Parametrised over every ordered pair of the 18 states that is not in TT-STM-001.
+  This gives 299 pairs (324 pairs minus 25 legal pairs), and it includes each state to itself.
   The test generates the pairs from the legal list and the state list.
 - **Steps:**
   1. Create a candidate in the source state.
@@ -1157,10 +1215,12 @@ No schema in `ARCHITECTURE.md` 7.1 has a field for the state (see OQ-T14).
 - **Expected result:** Each request fails with an error that names both states.
   The state is unchanged.
   The list includes these important cases.
-  `TRIAGED` to `GENERATING` (skips the contract).
+  `DECIDED` to `GENERATING` (skips the contract).
+  `CONTRACTED` to `GENERATING` (skips the contract approval).
   `GENERATING` to `EVALUATING_REUSE` (skips Gate 1).
-  `VALIDATING` to `PROPOSED` (skips Gate 2).
-  `UNVERIFIED` to `PROPOSED` and `UNVERIFIED` to `REVISING` (leaves a final state).
+  `VALIDATING` to `PACKAGE_APPROVAL` (skips Gate 2).
+  `EVALUATING_REUSE` to `PROPOSED` (skips the package approval).
+  `UNVERIFIED` to `REVISING` and `INCONCLUSIVE` to `PROPOSED` (leaves a final state).
   `REVISING` to `VALIDATING` (tests a package that was not generated again).
 - **What breaks this test:** A `set_state` function that accepts any value.
 - **Level and needs:** Unit. No network, no model, no container, no human.
@@ -1168,10 +1228,10 @@ No schema in `ARCHITECTURE.md` 7.1 has a field for the state (see OQ-T14).
 ### TT-STM-003 The final states have no exit
 
 - **Traces to:** `ARCHITECTURE.md` 6 ("permanently terminates without creating a pull request").
-- **Purpose:** Show that `REJECTED`, `UNVERIFIED`, and `MERGED` are final.
-- **Fixture:** One candidate in each of the three states.
+- **Purpose:** Show that `REJECTED`, `UNVERIFIED`, `INCONCLUSIVE`, `FIX_AT_SOURCE`, and `MERGED` are final.
+- **Fixture:** One candidate in each of the five states.
 - **Steps:**
-  1. Request a transition to each of the 13 states.
+  1. Request a transition to each of the 18 states.
   2. Try to run BUILD, CHECK, and the publisher for the candidate.
 - **Expected result:** Every request fails.
   No stage starts and the publisher double records no call.
@@ -1179,16 +1239,18 @@ No schema in `ARCHITECTURE.md` 7.1 has a field for the state (see OQ-T14).
 - **What breaks this test:** A "retry" command that moves `UNVERIFIED` back to `GENERATING` with a new budget.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
-### TT-STM-004 The approval guard on CONTRACTED to GENERATING
+### TT-STM-004 The approval guards
 
-- **Traces to:** `ARCHITECTURE.md` 2.2 decision 2; `AGENTS.md` 2.4.
-- **Purpose:** Show that the transition needs the human approval of the contract and the checks.
-- **Fixture:** A `CONTRACTED` candidate with `FX-GOLDEN`.
-  Parametrised over 3 cases: no approval, approval of a different contract content, and approval of the exact contract content.
+- **Traces to:** `ARCHITECTURE.md` 2.2 decision 2; 6 (`CONTRACTED` to `APPROVED`, `PACKAGE_APPROVAL` to `PROPOSED`); `AGENTS.md` 2.4.
+- **Purpose:** Show that each approval transition needs a human approval of the exact content.
+- **Fixture:** Parametrised over the 2 approval transitions and over 3 cases.
+  Case 1: no approval record.
+  Case 2: an approval of a different content (one changed byte in the contract or in the package).
+  Case 3: an approval of the exact content.
 - **Steps:**
-  1. Request the transition to `GENERATING`.
-- **Expected result:** Cases 1 and 2 fail and the state stays `CONTRACTED`.
-  Case 3 succeeds.
+  1. Request the transition `CONTRACTED` to `APPROVED`, or `PACKAGE_APPROVAL` to `PROPOSED`.
+- **Expected result:** Cases 1 and 2 fail and the state is unchanged, for both transitions.
+  Case 3 succeeds for both transitions.
 - **What breaks this test:** The guard checks that an approval record exists and does not compare the content.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
@@ -1208,17 +1270,18 @@ No schema in `ARCHITECTURE.md` 7.1 has a field for the state (see OQ-T14).
 - **Expected result:** Case 1 gives `EVALUATING_REUSE`.
   Case 2 gives `REVISING`.
   Case 3 gives `UNVERIFIED`.
-  Case 4 gives `UNVERIFIED`, and the revision counter stays 0.
+  Case 4 gives `INCONCLUSIVE`, and the revision counter stays 0.
   Case 5 gives `EVALUATING_REUSE`, because a pass needs no budget.
 - **What breaks this test:** `inconclusive` is handled as `fail`, so case 4 goes to `REVISING` and uses the budget.
+  The mapping of the earlier design, `inconclusive` to `UNVERIFIED`, also breaks the test.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ## Revision budget and fixed contract
 
 `MAX_TOTAL_REVISIONS = 3`.
 The counter increments when a gate failure sends the candidate to `REVISING`.
-A gate failure with `total_revisions >= 3` sends the candidate to `UNVERIFIED`.
-These tests follow the state diagram in `ARCHITECTURE.md` 6 (see OQ-T15 for the second reading of the text).
+The budget is one first attempt plus three revisions, and `total_revisions` counts the revisions already made.
+The fourth failure (`total_revisions >= 3`) sends the candidate to `UNVERIFIED`.
 
 ### TT-REV-001 The budget boundary
 
@@ -1263,7 +1326,7 @@ These tests follow the state diagram in `ARCHITECTURE.md` 6 (see OQ-T15 for the 
   1. Run CHECK to completion.
   2. Read the recorded call order.
 - **Expected result:** The call order is Gate 1, Gate 2, Gate 1, Gate 2.
-  The final state is `PROPOSED` and the last verdict has `total_revisions` 1.
+  The final state is `PACKAGE_APPROVAL` and the last verdict has `total_revisions` 1.
 - **What breaks this test:** After a Gate 2 failure the loop returns directly to Gate 2.
   A revision of the script then reaches publication with no Gate 1 run.
 - **Level and needs:** Integration. Stub verifier, stub model. No network, no container, no human.
@@ -1295,7 +1358,7 @@ These tests follow the state diagram in `ARCHITECTURE.md` 6 (see OQ-T15 for the 
   2. Read the state and the generator call count.
 - **Expected result:** The transition fails with an error that reports a contract change.
   The generator double records no call.
-  The candidate cannot reach `PROPOSED` without a new approval.
+  The candidate cannot reach `PACKAGE_APPROVAL` without a new approval.
   The state that the candidate enters is not defined (see OQ-T14).
 - **What breaks this test:** The loop compares the contract with the approved contract only at the first BUILD.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
@@ -1311,7 +1374,7 @@ These tests follow the state diagram in `ARCHITECTURE.md` 6 (see OQ-T15 for the 
   2. Read the recorded revision request.
   3. Compare the staged files before and after.
 - **Expected result:** The request contains `FAILLOG_MARKER_001`.
-  Only `scripts/start.sh` or `SKILL.md` changed.
+  Only `scripts/start.py` or `SKILL.md` changed.
   `tests/test_start.py` is unchanged.
 - **What breaks this test:** The revision request omits the verdict logs.
   A revision step that writes all three package files also breaks the test.
@@ -1385,7 +1448,7 @@ Run these tests in a container, because they bind the ports 5173, 5174, and 4000
 
 ### TT-ACC-002 The suite fails a no-op script
 
-- **Traces to:** here.now one-pager "Prove it works" ("The acceptance suite must reject a no-op script").
+- **Traces to:** `ARCHITECTURE.md` 9.1 "Suite Validity"; here.now one-pager "Prove it works".
 - **Purpose:** Show that the suite inspects real outcomes.
 - **Fixture:** `FX-SCRIPT-NOOP`.
 - **Steps:**
@@ -1486,7 +1549,7 @@ Run these tests in a container, because they bind the ports 5173, 5174, and 4000
 
 ### TT-G1I-003 The acceptance checks are outside the editable workspace
 
-- **Traces to:** here.now architecture "Technology choices", Disposable containers ("Keep acceptance checks outside the agent's editable workspace").
+- **Traces to:** `ARCHITECTURE.md` 2.2 decision 3, 7, 9.1 "Check Placement".
 - **Purpose:** Show that the code under test cannot change its own checks.
 - **Fixture:** A staged package with `FX-SCRIPT-TAMPER`.
 - **Steps:**
@@ -1500,9 +1563,9 @@ Run these tests in a container, because they bind the ports 5173, 5174, and 4000
 
 ### TT-G1I-004 Cleanup stops only the owned process
 
-- **Traces to:** here.now architecture "Worked example: start Vite" ("Cleanup: stop only that process"); `ARCHITECTURE.md` 9.1 ("Process cleanup traps").
+- **Traces to:** here.now architecture "Worked example: start Vite" ("Cleanup: stop only that process"); `ARCHITECTURE.md` 9.1 ("Process cleanup traps provide hygiene").
 - **Purpose:** Show that the Gate 1 cleanup does not stop processes that it did not start.
-- **Fixture:** The local fallback runner.
+- **Fixture:** The host worktree run.
   Before the run, the test starts its own listener on port 3000 and a second Vite process in a different directory.
 - **Steps:**
   1. Run Gate 1 with `FX-SCRIPT-REF`.
@@ -1511,27 +1574,29 @@ Run these tests in a container, because they bind the ports 5173, 5174, and 4000
 - **Expected result:** Both test processes are alive.
   The Vite process that the script started is stopped.
 - **What breaks this test:** A cleanup that stops processes by name or by port.
-- **Level and needs:** Integration. No container (local fallback). No network, no model, no human.
+- **Level and needs:** Integration. No container (host worktree run). No network, no model, no human.
 
-### TT-G1I-005 The local fallback is labelled as unconfined
+### TT-G1I-005 A host worktree run never counts as a formal Gate 1 result
 
-- **Traces to:** `ARCHITECTURE.md` 2.2 decision 7 ("Local Fallback"), 9.1 ("Local Subprocess Fallback"); `AGENTS.md` 2.3.
-- **Purpose:** Show that a local run does not claim isolation.
-- **Fixture:** A staged package with `FX-SCRIPT-REF`, with no container runtime available.
+- **Traces to:** `ARCHITECTURE.md` 2.2 decision 7 ("Host Worktree Run"), 9.1 ("This run never counts as a formal Gate 1 result"); `AGENTS.md` 2.3.
+- **Purpose:** Show that an unconfined run cannot move a candidate forward.
+- **Fixture:** A candidate in `VALIDATING` with a staged package that contains `FX-SCRIPT-REF`.
 - **Steps:**
-  1. Run Gate 1 with the local fallback.
-  2. Read the runner output and the working directory of the tests.
+  1. Run the tests as a host worktree run.
+  2. Read the runner output, the working directory of the tests, the verification directory, and the candidate state.
 - **Expected result:** The tests run in a clean Git worktree whose path starts with `/tmp/maga_test_`.
   The runner output says that the run was unconfined developer-host execution.
-  `Verdict` has no field for the runner type, so the place of this label is not defined (see OQ-T16).
-- **What breaks this test:** The fallback runs in the MAGA checkout and reports the same text as the container runner.
+  All tests pass, and the candidate state stays `VALIDATING`.
+  No Gate 1 verdict with `outcome` `pass` is stored for this run.
+- **What breaks this test:** The host run writes a normal `Verdict`, so the candidate moves to `EVALUATING_REUSE` with no container run.
 - **Level and needs:** Integration. No container. No network, no model, no human.
 
 ## Gate 2 reuse evaluation
 
 The run criteria come from `ARCHITECTURE.md` 9.2.
-A run is successful when the agent inspects `SKILL.md`, invokes `scripts/start.sh`, and verifies the backend handshake.
-The run must use 2 turns or fewer, with no human intervention and no fatal error.
+A run passes when its transcript contains a call to the script path (`scripts/start.py`) and no direct launch of `vite`.
+The run must have no human intervention and no fatal error.
+The first version has no turn limit.
 The tests use the run transcript format from "Gate 2 run transcript fixtures".
 
 ### TT-G2R-001 Each of the 5 runs uses a fresh worktree and a fresh agent
@@ -1559,52 +1624,26 @@ The tests use the run transcript format from "Gate 2 run transcript fixtures".
 - **Steps:**
   1. Run Gate 2.
   2. Read the prompt and every other argument of the 5 recorded calls.
-- **Expected result:** No prompt and no argument contains `start.sh`, `scripts/`, `SKILL.md`, or `vite-safe-dev-server`.
+- **Expected result:** No prompt and no argument contains `start.py`, `scripts/`, `SKILL.md`, or `vite-safe-dev-server`.
   No call adds a system prompt that names the skill.
 - **What breaks this test:** The harness adds "Use the vite-safe-dev-server skill" to the prompt to raise the pass rate.
 - **Level and needs:** Integration. Stub agent runner. No network, no model, no container, no human.
 
 ### TT-G2R-003 Detect the script call in a run transcript
 
-- **Traces to:** `ARCHITECTURE.md` 9.2 "Run Criteria" ("invoke the script (`scripts/start.sh`)").
+- **Traces to:** `ARCHITECTURE.md` 9.2 "Run Criteria" ("contains a call to the script path (`scripts/start.py`)").
 - **Purpose:** Show the positive and negative cases of script-call detection.
-- **Fixture:** Parametrised over 5 run transcripts, each based on the successful run.
+- **Fixture:** Parametrised over 4 run transcripts, each based on the successful run.
   Case 1: the successful run, unchanged.
-  Case 2: the `tool_call` at `step_index` 3 is `pnpm --dir apps/web exec vite --port 5173` (the agent did the work by hand).
-  Case 3: the `tool_call` at `step_index` 3 is `cat .agents/skills/vite-safe-dev-server/scripts/start.sh` (the agent read the script and did not run it).
-  Case 4: the script path appears only in a `generic_message` entry with the `content` "I could run scripts/start.sh".
-  Case 5: the script call exists, and its `tool_result` has `exit_code` 1.
+  Case 2: the `tool_call` at `step_index` 3 is `git status`, so the run has no script call.
+  Case 3: the `tool_call` at `step_index` 3 is `cat .claude/skills/vite-safe-dev-server/scripts/start.py` (the agent read the script and did not run it).
+  Case 4: the script path appears only in a `generic_message` entry with the `content` "I could run scripts/start.py".
 - **Steps:**
   1. Evaluate the run.
 - **Expected result:** Case 1 is successful.
-  Cases 2, 3, 4, and 5 are not successful.
-- **What breaks this test:** A detector that searches the complete transcript text for `start.sh`.
-  That detector accepts cases 3, 4, and 5.
-- **Level and needs:** Unit. No network, no model, no container, no human.
-
-### TT-G2R-004 A run must inspect the skill
-
-- **Traces to:** `ARCHITECTURE.md` 9.2 "Run Criteria" ("must inspect the skill via `SKILL.md`").
-- **Purpose:** Show that a script call without a skill read is not a successful reuse.
-- **Fixture:** The successful run without the entries at `step_index` 1 and 2.
-  The sources do not say how a harness observes that an agent loaded a skill (see OQ-T09).
-- **Steps:**
-  1. Evaluate the run.
-- **Expected result:** The run is not successful.
-- **What breaks this test:** The evaluator checks the script call only.
-- **Level and needs:** Unit. No network, no model, no container, no human.
-
-### TT-G2R-005 A run must verify the backend handshake
-
-- **Traces to:** `ARCHITECTURE.md` 9.2 "Run Criteria" ("verify the backend handshake").
-- **Purpose:** Show that a script call with a failed result is not a success.
-- **Fixture:** The successful run in which the `sanitized_output` at `step_index` 4 is the documented error JSON.
-  `{"status": "error", "reason": "all_permitted_ports_exhausted", "tried": [5173, 5174]}` with `exit_code` 1.
-  The sources do not define the evidence that proves the handshake (see OQ-T09).
-- **Steps:**
-  1. Evaluate the run.
-- **Expected result:** The run is not successful.
-- **What breaks this test:** The evaluator ignores the result of the script call.
+  Cases 2, 3, and 4 are not successful.
+- **What breaks this test:** A detector that searches the complete transcript text for `start.py`.
+  That detector accepts cases 3 and 4.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-G2R-006 The 4-of-5 rule and its boundaries
@@ -1623,39 +1662,30 @@ The tests use the run transcript format from "Gate 2 run transcript fixtures".
   The rule `successes == 5` fails the 4 case.
 - **Level and needs:** Integration. Stub agent runner. No network, no model, no container, no human.
 
-### TT-G2R-007 The rule always uses 5 runs
+### TT-G2R-007 A run that cannot execute is run again once and is not counted
 
-- **Traces to:** `ARCHITECTURE.md` 9.2 ("Evaluated across 5 fresh temporary project worktrees").
-- **Purpose:** Show that the harness cannot pass with fewer runs.
-- **Fixture:** A stub agent runner that returns 4 successful runs and then raises an error for run 5.
+- **Traces to:** `ARCHITECTURE.md` 6 ("A Gate 2 run that could not execute is run again once, and it is not one of the five counted runs"); 9.2.
+- **Purpose:** Show that the rule always uses 5 counted runs.
+- **Fixture:** A stub agent runner that returns 4 successful runs.
+  It raises an API error for the first attempt of run 5, and returns a run with no script call for the second attempt.
 - **Steps:**
   1. Run Gate 2.
-  2. Read the verdict.
-- **Expected result:** The harness does not stop after the fourth success without a fifth run attempt.
-  The verdict records the failed run 5.
-  The `outcome` for a run that could not execute is not defined (see OQ-T17).
-- **What breaks this test:** A harness that divides by the number of completed runs.
+  2. Read the verdict and the number of runner calls.
+- **Expected result:** The runner receives 6 calls.
+  `test_results` records 5 counted runs: 4 successful and 1 not successful.
+  `outcome` is `pass`.
+  The failed attempt is recorded, and it is not one of the 5 counted runs.
+- **What breaks this test:** A harness that stops after the fourth success and reports `pass` with 4 of 4.
+  A harness that counts the failed attempt gives 4 of 6 or never runs the second attempt.
 - **Level and needs:** Integration. Stub agent runner. No network, no model, no container, no human.
-
-### TT-G2R-008 The turn limit
-
-- **Traces to:** `ARCHITECTURE.md` 2.2 decision 8, 9.2 ("within <= 2 turns").
-- **Purpose:** Show both sides of the turn boundary.
-- **Fixture:** The successful run, parametrised over the turn counts 1, 2, and 3.
-  The sources do not define a turn (see OQ-T09), so the fixture gives the turn count as a number.
-- **Steps:**
-  1. Evaluate the run.
-- **Expected result:** The runs with 1 and 2 turns are successful.
-  The run with 3 turns is not successful.
-- **What breaks this test:** The comparison is `< 2`, or the turn count is not read.
-- **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-G2R-009 Human intervention or a fatal error fails the run
 
-- **Traces to:** `ARCHITECTURE.md` 9.2 ("without human intervention or fatal errors").
+- **Traces to:** `ARCHITECTURE.md` 9.2 "Run Criteria" ("with no human intervention and no fatal error").
 - **Purpose:** Show the two remaining run criteria.
 - **Fixture:** Parametrised over 2 variants of the successful run.
   Variant 1 has a second `user_input` entry "yes, go ahead" between `step_index` 2 and 3.
+  This entry is a human message and not a tool result.
   Variant 2 has the agent runner exit code 1 after the script call.
 - **Steps:**
   1. Evaluate the run.
@@ -1673,27 +1703,64 @@ The tests use the run transcript format from "Gate 2 run transcript fixtures".
 - **Steps:**
   1. The probe tries to read each of the four files.
   2. The probe reads the environment variable `GH_TOKEN`.
-  3. The probe opens an HTTPS connection to a model API endpoint and to `https://example.com/`.
+  3. The probe opens an HTTPS connection to the Anthropic API endpoint and to `https://example.com/`.
+  4. The probe starts a listener on the host at port 4100, and tries to connect to it from the container.
+  5. The probe sends an HTTP GET to `http://localhost:4000/api/health` inside the container.
 - **Expected result:** None of the four files is readable.
   `GH_TOKEN` is not set.
-  The connection to the model API endpoint opens.
+  The connection to the Anthropic API endpoint opens.
   The connection to `https://example.com/` fails.
-  "Local loopback inaccessible" conflicts with the backend check on `localhost:4000` (see OQ-T18).
+  The connection to the host listener on port 4100 fails.
+  The stub backend inside the container answers on `localhost:4000`.
 - **What breaks this test:** The runner mounts the home directory of the user to give the agent its login.
 - **Level and needs:** End-to-end. Container and network. No model, no human.
 
+### TT-G2R-011 A direct launch of vite fails the run
+
+- **Traces to:** `ARCHITECTURE.md` 9.2 "Run Criteria" ("and no direct launch of `vite`").
+- **Purpose:** Show that a run fails when the agent starts Vite by hand, even if it also calls the script.
+- **Fixture:** Parametrised over 3 variants of the successful run.
+  Variant 1 adds the `tool_call` `pnpm --dir apps/web exec vite --port 5173` before the script call.
+  Variant 2 adds the `tool_call` `npx vite --port 5175` after the script call.
+  Variant 3 adds the `tool_call` `cat apps/web/vite.config.ts`, which names Vite and starts nothing.
+  The sources do not define the rule that recognises a direct launch (see OQ-T09).
+- **Steps:**
+  1. Evaluate the run.
+- **Expected result:** Variants 1 and 2 are not successful.
+  Variant 3 is successful.
+- **What breaks this test:** The evaluator returns success as soon as it finds the script call.
+  An evaluator that fails every command with the text `vite` fails variant 3.
+- **Level and needs:** Unit. No network, no model, no container, no human.
+
+### TT-G2R-012 Two failed attempts of one run give inconclusive
+
+- **Traces to:** `ARCHITECTURE.md` 6 ("The outcome `inconclusive` means an infrastructure failure only"; `EVALUATING_REUSE` to `INCONCLUSIVE`).
+- **Purpose:** Show that an infrastructure failure in Gate 2 is not a fail and uses no revision.
+- **Fixture:** A stub agent runner that returns 2 successful runs and then an API error for both attempts of run 3.
+  The candidate has `total_revisions` 1.
+- **Steps:**
+  1. Run Gate 2.
+  2. Read the verdict, the candidate state, and the publisher double.
+- **Expected result:** `gate_number` is 2 and `outcome` is `inconclusive`.
+  `total_revisions` is still 1.
+  The candidate state is `INCONCLUSIVE`.
+  No revision request occurs and the publisher double records no call.
+- **What breaks this test:** The harness records the run as not successful and continues, so the outcome is `fail` or `pass`.
+  Both results hide an infrastructure fault behind a verdict about the skill.
+- **Level and needs:** Integration. Stub agent runner. No network, no model, no container, no human.
+
 ## Publisher
 
-The approval of the exact package comes from the here.now pages.
+`ARCHITECTURE.md` 2.2 decision 2 binds the package approval to the package hash.
 The sources define no hash algorithm and no approval record format (see OQ-T19).
 The tests change a package and observe the result, so they need no algorithm name.
 
 ### TT-PUB-001 The approval is bound to the package content
 
-- **Traces to:** here.now architecture "Contracts at each boundary", Publisher ("bind approval to the exact package").
+- **Traces to:** `ARCHITECTURE.md` 2.2 decision 2 ("binds that approval to the package hash"), 5 (row 6).
 - **Purpose:** Show that the approval identifies the content of all package files.
 - **Fixture:** A verified package, parametrised over 5 changes after approval.
-  Change 1: one byte in `scripts/start.sh`.
+  Change 1: one byte in `scripts/start.py`.
   Change 2: one byte in `SKILL.md`.
   Change 3: one byte in `tests/test_start.py`.
   Change 4: a new file `scripts/extra.sh`.
@@ -1704,12 +1771,12 @@ The tests change a package and observe the result, so they need no algorithm nam
   3. Ask the publisher if the approval is valid.
 - **Expected result:** The approval is not valid for changes 1 to 4.
   The approval is valid for change 5.
-- **What breaks this test:** The hash covers `scripts/start.sh` only, so changes 2, 3, and 4 stay approved.
+- **What breaks this test:** The hash covers `scripts/start.py` only, so changes 2, 3, and 4 stay approved.
 - **Level and needs:** Unit. No network, no model, no container, no human.
 
 ### TT-PUB-002 An approval does not move to a different package
 
-- **Traces to:** here.now architecture "One application. Six steps.", step 06 ("Check approval for the exact package").
+- **Traces to:** `ARCHITECTURE.md` 2.1 (`PROPOSE`: "Checks human approval bound to the exact package"), 5 (row 6).
 - **Purpose:** Show that an approval belongs to one candidate and one content.
 - **Fixture:** Two verified packages for the candidates `cand_a` and `cand_b`.
   Only `cand_a` is approved.
@@ -1722,7 +1789,7 @@ The tests change a package and observe the result, so they need no algorithm nam
 
 ### TT-PUB-003 Only approved files are committed
 
-- **Traces to:** here.now architecture "Contracts at each boundary", Publisher ("Commit only approved files").
+- **Traces to:** `ARCHITECTURE.md` 2.2 decision 2 ("commits only approved files"), 5 (row 6).
 - **Purpose:** Show that the commit contains the approved package and nothing else.
 - **Fixture:** An approved package.
   The target repository working tree also has an untracked file `notes.txt` and a modified tracked file `README.md`.
@@ -1738,7 +1805,7 @@ The tests change a package and observe the result, so they need no algorithm nam
 
 ### TT-PUB-004 The read-back detects a difference
 
-- **Traces to:** here.now architecture "Contracts at each boundary", Publisher ("read back the result").
+- **Traces to:** `ARCHITECTURE.md` 2.1 (`PROPOSE`: "reads back the result"), 5 (row 6).
 - **Purpose:** Show that the read-back is a check and not a log line.
 - **Fixture:** An approved package.
   A stub pull-request service, parametrised over 3 read-back responses.
@@ -1779,11 +1846,11 @@ They need no Logfire account and no network.
 
 - **Traces to:** here.now architecture "Technology choices", Pydantic Logfire ("Link records by candidate ID").
 - **Purpose:** Show that one candidate can be traced across the stages.
-- **Fixture:** A pipeline run for `FX-GOLDEN` from TRIAGE to the Gate 2 verdict, with stub model and stub agent runner.
+- **Fixture:** A pipeline run for `FX-GOLDEN` from DECIDE to the Gate 2 verdict, with stub model and stub agent runner.
 - **Steps:**
   1. Capture all spans and logs.
   2. Group them by stage.
-- **Expected result:** A minimum of one record exists for each of TRIAGE, BUILD, CHECK Gate 1, and CHECK Gate 2.
+- **Expected result:** A minimum of one record exists for each of DECIDE, BUILD, CHECK Gate 1, and CHECK Gate 2.
   Each of these records has an attribute with the value `cand_vite_strict_port_001`.
   The attribute name is not defined by the sources (see OQ-T20).
 - **What breaks this test:** The candidate ID is set on the first span only and child spans of other stages do not inherit it.
@@ -1795,7 +1862,7 @@ They need no Logfire account and no network.
 - **Purpose:** Show that model-call instrumentation does not export prompts that contain excerpts.
 - **Fixture:** The sessions of FT-PUB-004, which contain `TRANSCRIPT_CANARY_SENTENCE_001`.
 - **Steps:**
-  1. Run the pipeline from the reader to the end of TRIAGE and capture all records.
+  1. Run the pipeline from the reader to the end of DECIDE and capture all records.
   2. Serialise each record with all attributes to text.
   3. Search for `TRANSCRIPT_CANARY_SENTENCE_001`.
 - **Expected result:** The stub model received the sentence, which shows that the pipeline processed it.
@@ -1839,10 +1906,10 @@ They need no Logfire account and no network.
   The test sets the model timeout to 1 second.
   The sources define no default timeout (see OQ-T21).
 - **Steps:**
-  1. Run TRIAGE for the P1 candidate.
+  1. Run DECIDE for the P1 candidate.
   2. Measure the elapsed time.
   3. Read the contracts directory and the candidate state.
-- **Expected result:** TRIAGE ends in less than 10 seconds with an error that names the timeout.
+- **Expected result:** DECIDE ends in less than 10 seconds with an error that names the timeout.
   No contract file exists.
   The candidate state is not `CONTRACTED`.
 - **What breaks this test:** The model call has no timeout.
@@ -1855,12 +1922,12 @@ They need no Logfire account and no network.
 - **Purpose:** Show that an invalid contract never enters the state store.
 - **Fixture:** Parametrised over `FX-MODEL-BADJSON` and `FX-MODEL-MISSING`.
 - **Steps:**
-  1. Run TRIAGE with the stub model response.
+  1. Run DECIDE with the stub model response.
   2. Read the contracts directory and the candidate state.
 - **Expected result:** No contract file exists in either case.
   The error for `FX-MODEL-MISSING` names the field `invariants`.
   The candidate state is not `CONTRACTED` and no approval request is shown.
-- **What breaks this test:** TRIAGE fills a missing field with an empty list and continues.
+- **What breaks this test:** DECIDE fills a missing field with an empty list and continues.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
 
 ### TT-RES-003 A schema-valid contract without the essential requirements is rejected
@@ -1869,13 +1936,13 @@ They need no Logfire account and no network.
 - **Purpose:** Show that schema validation is not the only contract check.
 - **Fixture:** `FX-MODEL-STRIPPED`.
 - **Steps:**
-  1. Run TRIAGE with the stub model response.
+  1. Run DECIDE with the stub model response.
   2. Read the result of the semantic completeness evaluation.
 - **Expected result:** Pydantic validation succeeds.
   The semantic completeness evaluation fails.
   The failure names the absent requirements: the refusal to weaken CORS and the permitted port bounds.
   No approval request is shown.
-- **What breaks this test:** TRIAGE has the schema check only.
+- **What breaks this test:** DECIDE has the schema check only.
   The terse-output Gateway rule can then remove the invariants with no visible effect.
 - **Level and needs:** Integration. Stub model. No network, no container, no human.
 
@@ -1909,7 +1976,7 @@ They need no Logfire account and no network.
 - **Expected result:** `outcome` is not `pass` in either case.
   The candidate state is not `EVALUATING_REUSE`.
 - **What breaks this test:** The verifier maps the pytest exit code "no tests collected" or "all skipped" to `pass`.
-- **Level and needs:** Integration. Container or local fallback. No network, no model, no human.
+- **Level and needs:** Integration. Container. No network, no model, no human.
 
 ### TT-RES-006 A failed stage does not report success for the pipeline
 
@@ -1930,88 +1997,58 @@ They need no Logfire account and no network.
 ## Open questions
 
 Each open question blocks a test or forces an assumption.
+The identifiers are stable, so the list has gaps where the sources closed a question.
 
 1. **OQ-T01:** The sources name the modules but no functions, no command-line interface, and no exit status values.
-2. **OQ-T02:** The sources give no raw line schema for Claude Code transcripts.
-   They do not state the mapping from Antigravity `type` and `source` values to `entry_type` and `source` values.
-   They do not define how `session_id` and `entry_id` are made.
-   This blocks TT-PAR-008.
+2. **OQ-T02:** `ARCHITECTURE.md` 3.2 maps `sessionId` to `session_id` and `uuid` to `entry_id`.
+   It does not say how `step_index` is made, because a Claude Code line has no index.
+   It does not give the `source` value of a `tool_result` entry.
+   It does not say how one line with several content blocks becomes entries, because `uuid` is one value for the line.
+   It does not say if READ imports subagent lines (`isSidechain` `true`).
 3. **OQ-T03:** The sources do not define the reader behaviour for a malformed line.
    This blocks TT-PAR-004.
-4. **OQ-T04:** `triage_status` has no value for the triage results "fix at source" and "reuse".
-5. **OQ-T05:** `Entry` has no field that links the parts of a split result, and no source gives the size limit.
+4. **OQ-T05:** `Entry` has no field that links the parts of a split result, and no source gives the size limit.
    This blocks part of TT-PAR-007.
-6. **OQ-T06:** The sources do not define how the repository root is found for the `$REPO_ROOT` rule.
-   They do not define the placeholder names for timestamps, process IDs, commit hashes, and UUIDs.
-7. **OQ-T07:** No source defines a normalisation rule for ticket identifiers, pull-request numbers, branch names, or plain integers.
+5. **OQ-T06:** The sources do not define the placeholder names for timestamps, process IDs, commit hashes, and UUIDs.
+6. **OQ-T07:** No source defines a normalisation rule for ticket identifiers, pull-request numbers, branch names, or plain integers.
    This blocks TT-NRM-009 and TT-NRM-010.
-8. **OQ-T08:** The sources do not define the sequence length, contiguity, or the difference between `Candidate.frequency` and `Evidence.observed_occurrences`.
+7. **OQ-T08:** The sources do not define the sequence length or contiguity.
+   They do not define `Evidence.observed_occurrences` for repeats inside one session.
    They do not say if `Candidate.command_sequence` holds the original or the normalised commands.
-9. **OQ-T09:** The sources do not define a "turn", the raw output format of `claude -p`, or the evidence for "inspect the skill" and "verify the backend handshake".
-10. **OQ-T10:** The sources do not list the stderr error patterns of the error-and-fix rule.
-    This blocks TT-EFX-006.
-11. **OQ-T11:** The sources define no token budget, overlap size, tokeniser, or content of the unfinished-task summary.
+   `ARCHITECTURE.md` 11 leaves open if the threshold of 3 sessions applies to corrections and error-and-fix pairs.
+8. **OQ-T09:** The sources do not define the rule that recognises "a direct launch of `vite`" or "a fatal error" in a run transcript.
+9. **OQ-T10:** The sources do not list the stderr error patterns of the error-and-fix rule.
+   This blocks TT-EFX-006.
+10. **OQ-T11:** The sources define no token budget, overlap size, tokeniser, or content of the unfinished-task summary.
     No schema in `ARCHITECTURE.md` 7.1 describes a chunk.
-12. **OQ-T12:** The three secret patterns and the placeholder are defined for the Gateway guardrail only.
+11. **OQ-T12:** The three secret patterns and the placeholder are defined for the Gateway guardrail only.
     The pattern set of the reader redactor is not defined.
-13. **OQ-T13:** `AGENTS.md` says `.maga/state/` is gitignored.
-    No source says the same for `.maga/artifacts/`.
-    The repository has no `.gitignore` file at the time of writing.
-14. **OQ-T14:** No schema has a field for the state machine state.
-    `CLARIFICATION_REQUESTED` has no exit.
-    The states after a human refusal and after a contract change are not defined.
-    The wrapper-only path and the package approval have no state.
-15. **OQ-T15:** `ARCHITECTURE.md` 6 has two readings of the limit.
-    The state diagram tests the third revision and ends at the fourth failure.
-    The text says the pipeline goes "immediately" to `UNVERIFIED` when the count reaches 3.
-    The tests follow the state diagram.
-16. **OQ-T16:** `Verdict` has no field that records the runner type (container or unconfined local fallback).
-17. **OQ-T17:** The sources do not define when a gate gives `inconclusive`, and they define no transition for a Gate 2 `inconclusive`.
-    They do not say if a Gate 2 run that could not execute is a failed run.
-18. **OQ-T18:** `ARCHITECTURE.md` 2.2 decision 7 makes local loopback inaccessible in Gate 2.
-    The Gate 2 task needs the backend on `http://localhost:4000` inside the sandbox.
-    The sources do not say that the rule means the loopback of the host only.
-19. **OQ-T19:** The sources define no hash algorithm, no approval record format, and no approval storage path.
-20. **OQ-T20:** The sources define no Logfire attribute names.
-21. **OQ-T21:** The sources define no model timeout, no retry rule, and no Gate 1 or Gate 2 time limit.
+12. **OQ-T14:** No schema has a field for the state machine state.
+    `CLARIFICATION_REQUESTED` and `FIX_AT_SOURCE` have no exit.
+    The state after a contract change during repair is not defined.
+13. **OQ-T19:** The sources define no hash algorithm, no approval record format, and no approval storage path.
+14. **OQ-T20:** The sources define no Logfire attribute names.
+15. **OQ-T21:** The sources define no model timeout, no retry rule for a model call, and no Gate 1 or Gate 2 time limit.
     `inputs.timeout_seconds` 15 in the golden contract belongs to the generated script only.
 
 ## Source conflicts
 
-1. **SC-T01 Stage names.**
-   The here.now architecture page has six steps: READ, FIND, DECIDE, BUILD, CHECK, PROPOSE.
-   `ARCHITECTURE.md` 2.1 and `AGENTS.md` have five stages: `FIND`, `TRIAGE`, `BUILD`, `CHECK`, `SHIP`.
-   This file uses the five stage names.
-2. **SC-T02 Storage.**
+The identifiers are stable, so the list has gaps where the sources closed a conflict.
+
+1. **SC-T02 Storage.**
    The here.now architecture page uses SQLite for checkpoints, candidates, and results.
    `ARCHITECTURE.md` 2.2 decision 6 and 7 use local JSON files and no SQLite.
    TT-STO-001 asserts that no database file exists.
-3. **SC-T03 Candidate threshold.**
-   `ARCHITECTURE.md` 2.1, 5, 5.1, and 12 say `>= 3` distinct sessions.
-   The diagram in `ARCHITECTURE.md` 4 says "Threshold >= 2 occurrences".
-   TT-SEQ-002 follows `>= 3` distinct sessions.
-4. **SC-T04 Normalisation scope.**
+2. **SC-T04 Normalisation scope.**
    `ARCHITECTURE.md` 5 (row 2) lists "ports, paths, hashes, timestamps".
    `ARCHITECTURE.md` 5.1 rule 4 adds process IDs and UUIDs.
    The here.now page says "normalise variable values" and names no type.
    No source names ticket identifiers or pull-request numbers.
-5. **SC-T05 Gate 1 executor.**
-   The here.now architecture page says a Gemini execution agent runs bounded tools in isolation.
-   `ARCHITECTURE.md` 9.1 runs the tests in a container with no model.
-   This file follows `ARCHITECTURE.md` 9.1.
-6. **SC-T06 Test location.**
-   The here.now page keeps the acceptance checks outside the editable workspace.
-   `ARCHITECTURE.md` 7 stages `tests/` next to `scripts/` in one package directory.
-   TT-G1I-003 tests the behaviour: the script under test cannot change the checks that run.
-7. **SC-T07 Package approval.**
-   The here.now pages bind an approval to the exact package before the commit.
-   `ARCHITECTURE.md` names contract approval and maintainer review only, and its state machine has no package approval.
-   The `TT-PUB` tests trace to the here.now pages.
-8. **SC-T08 Model roles.**
-   The here.now pages give all model work to Gemini.
-   `ARCHITECTURE.md` 10.1 gives contract synthesis to an open-weight model on Modal, and 5.1 rule 3 gives correction classification to Gemini.
-   The tests use a stub model for each route and do not depend on the provider.
-9. **SC-T09 Gate 1 case count.**
+3. **SC-T05 Gate 1 executor.**
+   The here.now architecture page says a model execution agent runs bounded tools in isolation.
+   `ARCHITECTURE.md` 2.2 decision 7 and 9.1 say that Gate 1 is model-free.
+   This file follows `ARCHITECTURE.md`.
+4. **SC-T09 Gate 1 case count.**
    `ARCHITECTURE.md` 9.1 says Gate 1 verifies "all 4 acceptance cases".
    That count belongs to the Vite golden contract.
    A different contract, such as the worktree contract, can have a different count.
