@@ -7,10 +7,11 @@ import sys
 
 from pydantic_ai.exceptions import UserError
 
-from maga import finder, reader, triage
+from maga import finder, generator, reader, triage
 from maga.schemas import Candidate
 
 STATE = Path(".maga/state")
+STAGED = Path(".maga/artifacts/staged")
 
 
 def main() -> int:
@@ -21,7 +22,12 @@ def main() -> int:
     stages.add_parser("find", help="rank the repeated procedures in the stored entries")
     decide = stages.add_parser("decide", help="triage one candidate and ask for contract approval")
     decide.add_argument("candidate_id")
+    build = stages.add_parser("build", help="generate tests, script, and skill from the contract")
+    build.add_argument("candidate_id")
     args = parser.parse_args()
+
+    if args.stage == "build":
+        return _build(args.candidate_id)
 
     if args.stage == "decide":
         return _decide(args.candidate_id)
@@ -40,6 +46,18 @@ def main() -> int:
     report = reader.read(paths, STATE)
     sys.stdout.write(json.dumps(report) + "\n")
     return 0 if report["files"] else 1
+
+
+def _build(candidate_id: str) -> int:
+    try:
+        contract = generator.approved_contract(STATE, candidate_id)
+        generator.write_tests(contract, STAGED / candidate_id)
+        package = generator.write_script(contract, STAGED / candidate_id)
+    except (FileNotFoundError, PermissionError, UserError) as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
+    sys.stdout.write(package.model_dump_json(indent=2, exclude={"contract"}) + "\n")
+    return 0
 
 
 def _decide(candidate_id: str) -> int:
