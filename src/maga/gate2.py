@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from typing import TypedDict
 
 from maga.reader import parse_session
 from maga.schemas import Entry, Package, Verdict
@@ -69,47 +70,77 @@ def install_skill(package: Package, repo: Path) -> Path:
     return skill
 
 
-def fresh_workdir(package: Package, demo_repo: Path) -> Path:
-    """A new copy of the demo repository with the skill where Claude Code loads project skills."""
+def _fresh_copy(demo_repo: Path) -> Path:
+    """A new, isolated copy of the demo repository, so no run carries another run's changes."""
     workdir = Path(tempfile.mkdtemp(prefix="maga_gate2_")) / demo_repo.name
     shutil.copytree(demo_repo, workdir)
+    return workdir
+
+
+def fresh_workdir(package: Package, demo_repo: Path) -> Path:
+    """A new copy of the demo repository with the skill where Claude Code loads project skills."""
+    workdir = _fresh_copy(demo_repo)
     install_skill(package, workdir)
     return workdir
+
+
+def _run_series(
+    make_workdir: Callable[[], Path],
+    runner: Runner,
+    judge: Callable[[list[Entry], int], bool],
+    record: Callable[[list[Entry], int], None] | None = None,
+) -> tuple[dict[str, str], list[str], int, bool]:
+    """RUNS attempts of TASK, each retried once on a RunnerError.
+
+    Returns the per-run "passed"/"failed" results, the uncounted-attempt log, how many runs
+    `judge` found true, and whether a run used up every attempt without executing at all
+    (the caller reports that case as inconclusive, and stops asking for further runs).
+    `record`, when given, sees every run's raw transcript and exit code, regardless of `judge`.
+    """
+    results: dict[str, str] = {}
+    uncounted: list[str] = []
+    passed = 0
+    gave_up = False
+    for number in range(1, RUNS + 1):
+        for attempt in range(1, _ATTEMPTS + 1):
+            try:
+                entries, exit_code = runner(make_workdir(), TASK)
+            except RunnerError as error:
+                uncounted.append(f"run_{number} attempt {attempt}: {error}")
+                if attempt == _ATTEMPTS:
+                    gave_up = True
+                continue
+            if record:
+                record(entries, exit_code)
+            ok = judge(entries, exit_code)
+            passed += ok
+            results[f"run_{number}"] = "passed" if ok else "failed"
+            break
+        if gave_up:
+            break
+    return results, uncounted, passed, gave_up
 
 
 def gate2_verdict(
     package: Package, demo_repo: Path, runner: Runner, total_revisions: int
 ) -> Verdict:
     started = time.monotonic()
-    results: dict[str, object] = {"execution": "unconfined developer-host run, not a sandbox"}
-    uncounted: list[str] = []
-    passed = 0
-    outcome = "pass"
-    for number in range(1, RUNS + 1):
-        for attempt in range(1, _ATTEMPTS + 1):
-            try:
-                entries, exit_code = runner(fresh_workdir(package, demo_repo), TASK)
-            except RunnerError as error:
-                uncounted.append(f"run_{number} attempt {attempt}: {error}")
-                if attempt == _ATTEMPTS:
-                    outcome = "inconclusive"
-                continue
-            ok = run_passed(entries, exit_code)
-            passed += ok
-            results[f"run_{number}"] = "passed" if ok else "failed"
-            break
-        if outcome == "inconclusive":
-            break
-    if outcome != "inconclusive":
-        outcome = "pass" if passed >= PASS_AT else "fail"
-    results["uncounted_attempts"] = uncounted
+    results, uncounted, passed, gave_up = _run_series(
+        lambda: fresh_workdir(package, demo_repo), runner, run_passed
+    )
+    outcome = "inconclusive" if gave_up else ("pass" if passed >= PASS_AT else "fail")
+    test_results = {
+        "execution": "unconfined developer-host run, not a sandbox",
+        **results,
+        "uncounted_attempts": uncounted,
+    }
     return Verdict.model_validate(
         {
             "candidate_id": package.candidate_id,
             "gate_number": 2,
             "outcome": outcome,
             "total_revisions": total_revisions,
-            "test_results": results,
+            "test_results": test_results,
             "stdout_log": f"{passed} of {RUNS} runs passed; the threshold is {PASS_AT}",
             "stderr_log": "\n".join(uncounted),
             "execution_duration_ms": int((time.monotonic() - started) * 1000),
@@ -173,3 +204,88 @@ def claude_runner(workdir: Path, task: str) -> AgentRun:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(int(pid), signal.SIGTERM)  # only the processes that this run started
     return parse_session(transcript)[0], done.returncode
+
+
+def _vite_call(entries: list[Entry]) -> bool:
+    calls = [e.command_line for e in entries if e.entry_type == "tool_call" and e.command_line]
+    return any(_VITE_LAUNCH.match(step) for call in calls for step in _STEP.split(call))
+
+
+def _baseline_ok(_entries: list[Entry], exit_code: int) -> bool:
+    """A run with no script to call has no run_passed-equivalent oracle for correctness.
+
+    ponytail: "ok" here means the agent did not end in a fatal error, nothing more. Reading the
+    raw transcripts is still how a person judges whether it bound an unpermitted port or touched
+    something it should not have under port exhaustion (ARCHITECTURE.md 8.2).
+    """
+    return exit_code == 0
+
+
+class _RunRecord(TypedDict):
+    exit_code: int
+    tool_calls: int
+    tokens: int
+    launched_vite_directly: bool
+
+
+class SideReport(TypedDict):
+    pass_rate: str
+    average_tool_calls: float
+    average_tokens: float
+    direct_vite_launches: int
+    uncounted_attempts: list[str]
+    runs: list[_RunRecord]
+
+
+class Comparison(TypedDict):
+    candidate_id: str
+    task: str
+    baseline: SideReport
+    skill_equipped: SideReport
+
+
+def _side(
+    make_workdir: Callable[[], Path], runner: Runner, judge: Callable[[list[Entry], int], bool]
+) -> SideReport:
+    raw: list[_RunRecord] = []
+
+    def record(entries: list[Entry], exit_code: int) -> None:
+        raw.append(
+            {
+                "exit_code": exit_code,
+                "tool_calls": sum(1 for e in entries if e.entry_type == "tool_call"),
+                "tokens": sum((e.tokens_in or 0) + (e.tokens_out or 0) for e in entries),
+                "launched_vite_directly": _vite_call(entries),
+            }
+        )
+
+    _results, uncounted, passed, _gave_up = _run_series(make_workdir, runner, judge, record)
+    calls = [run["tool_calls"] for run in raw]
+    tokens = [run["tokens"] for run in raw]
+    return {
+        "pass_rate": f"{passed}/{RUNS}",
+        "average_tool_calls": round(sum(calls) / len(calls), 1) if calls else 0.0,
+        "average_tokens": round(sum(tokens) / len(tokens), 1) if tokens else 0.0,
+        "direct_vite_launches": sum(1 for run in raw if run["launched_vite_directly"]),
+        "uncounted_attempts": uncounted,
+        "runs": raw,
+    }
+
+
+def compare(
+    package: Package, demo_repo: Path, state: Path, runner: Runner = claude_runner
+) -> Comparison:
+    """The before/after comparison of ARCHITECTURE.md 8.3: RUNS fresh runs of TASK, with and
+    without the skill installed, in equivalent fresh copies of demo_repo. Same task, same model,
+    same limits; only the presence of the skill differs.
+    """
+    report: Comparison = {
+        "candidate_id": package.candidate_id,
+        "task": TASK,
+        "baseline": _side(lambda: _fresh_copy(demo_repo), runner, _baseline_ok),
+        "skill_equipped": _side(lambda: fresh_workdir(package, demo_repo), runner, run_passed),
+    }
+    target = state / "comparison" / f"{package.candidate_id}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(report, indent=2))
+    return report

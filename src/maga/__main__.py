@@ -33,6 +33,11 @@ def main() -> int:
     propose = stages.add_parser("propose", help="ask for package approval, then open the PR")
     propose.add_argument("candidate_id")
     propose.add_argument("demo_repo", type=Path, nargs="?", default=Path("fixtures/demo-monorepo"))
+    compare = stages.add_parser(
+        "compare", help="the same task, 5 runs with the skill and 5 without (ARCHITECTURE.md 8.3)"
+    )
+    compare.add_argument("candidate_id")
+    compare.add_argument("demo_repo", type=Path, nargs="?", default=Path("fixtures/demo-monorepo"))
     unattended = stages.add_parser(
         "auto", help="read, find, then build and install with no question"
     )
@@ -56,8 +61,9 @@ def main() -> int:
         return _read(args.paths)
     if stage == "find":
         return _find()
-    if stage in {"verify", "propose"}:
-        return {"verify": _check, "propose": _propose}[stage](args.candidate_id, args.demo_repo)
+    if stage in {"verify", "propose", "compare"}:
+        dispatch = {"verify": _check, "propose": _propose, "compare": _compare}
+        return dispatch[stage](args.candidate_id, args.demo_repo)
     return {"decide": _decide, "build": _build, "check": _check}[stage](args.candidate_id)
 
 
@@ -151,6 +157,25 @@ def _propose(candidate_id: str, demo_repo: Path) -> int:
         sys.stderr.write(f"not published: {error}\n")
         return 1
     sys.stdout.write(f"{url}\n")
+    return 0
+
+
+def _compare(candidate_id: str, demo_repo: Path) -> int:
+    """The before/after of ARCHITECTURE.md 8.3: the same task, with and without the skill."""
+    try:
+        report = gate2.compare(_package(candidate_id), demo_repo, STATE)
+    except (FileNotFoundError, PermissionError, UserError) as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
+    for name, result in (
+        ("baseline", report["baseline"]),
+        ("skill_equipped", report["skill_equipped"]),
+    ):
+        sys.stdout.write(
+            f"{name:<15} pass_rate={result['pass_rate']} "
+            f"avg_tool_calls={result['average_tool_calls']} avg_tokens={result['average_tokens']} "
+            f"direct_vite_launches={result['direct_vite_launches']}\n"
+        )
     return 0
 
 

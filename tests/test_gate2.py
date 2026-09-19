@@ -1,10 +1,20 @@
 """TT-G2R: the Gate 2 run criteria, the 4-of-5 rule, and the run-again rule, with a stub runner."""
 
+import json
 from pathlib import Path
 
 import pytest
 
-from maga.gate2 import PASS_AT, RUNS, TASK, AgentRun, RunnerError, gate2_verdict, run_passed
+from maga.gate2 import (
+    PASS_AT,
+    RUNS,
+    TASK,
+    AgentRun,
+    RunnerError,
+    compare,
+    gate2_verdict,
+    run_passed,
+)
 from maga.schemas import Contract, Entry, Package
 from maga.triage import GOLDEN
 
@@ -137,3 +147,68 @@ def test_g2r_012_two_failed_attempts_of_one_run_give_inconclusive(package: Packa
     verdict = gate2_verdict(package, DEMO, runner, total_revisions=1)
     assert (verdict.outcome, verdict.total_revisions, len(calls)) == ("inconclusive", 1, 4)
     assert "run_3" not in verdict.test_results
+
+
+def _entries(command: str, exit_code: int, *, tokens: int) -> list[Entry]:
+    return [
+        Entry.model_validate(
+            {
+                "entry_id": "e0",
+                "session_id": "run",
+                "step_index": 0,
+                "source": "user",
+                "entry_type": "user_input",
+                "timestamp": "2026-01-05T10:00:00Z",
+                "content": TASK,
+            }
+        ),
+        Entry.model_validate(
+            {
+                "entry_id": "e1",
+                "session_id": "run",
+                "step_index": 1,
+                "source": "model",
+                "entry_type": "tool_call",
+                "timestamp": "2026-01-05T10:00:01Z",
+                "command_line": command,
+                "tokens_in": tokens,
+                "tokens_out": tokens,
+                "exit_code": exit_code,
+            }
+        ),
+    ]
+
+
+def test_compare_runs_a_fresh_skill_less_copy_for_the_baseline_side(
+    package: Package, tmp_path: Path
+) -> None:
+    seen_baseline_workdirs: list[Path] = []
+
+    def runner(workdir: Path, _task: str) -> AgentRun:
+        has_skill = (workdir / SKILL_DIR / "scripts" / "start.py").exists()
+        if not has_skill:
+            seen_baseline_workdirs.append(workdir)
+            return _entries("vite --port 5173", 0, tokens=50), 0
+        return _entries(SCRIPT_CALL, 0, tokens=100), 0
+
+    state = tmp_path / "state"
+    report = compare(package, DEMO, state, runner)
+
+    assert len(seen_baseline_workdirs) == RUNS
+    for workdir in seen_baseline_workdirs:  # the skill fixture never reached the baseline copy
+        assert not (workdir / SKILL_DIR).exists()
+        assert (workdir / "packages/config/ports.json").exists()  # still a real demo-repo copy
+
+    assert report["candidate_id"] == package.candidate_id
+    assert report["task"] == TASK
+    baseline, skilled = report["baseline"], report["skill_equipped"]
+    assert baseline["pass_rate"] == f"{RUNS}/{RUNS}"  # exit_code 0 every time: _baseline_ok
+    assert skilled["pass_rate"] == f"{RUNS}/{RUNS}"  # run_passed: the script call, no vite launch
+    assert baseline["direct_vite_launches"] == RUNS  # the unassisted agent always calls vite
+    assert skilled["direct_vite_launches"] == 0
+    assert baseline["average_tokens"] == 100.0  # 50 in + 50 out
+    assert skilled["average_tokens"] == 200.0
+    assert baseline["average_tool_calls"] == 1.0
+
+    stored = json.loads((state / "comparison" / f"{package.candidate_id}.json").read_text())
+    assert stored == report
