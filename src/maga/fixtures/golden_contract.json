@@ -1,0 +1,39 @@
+{
+  "candidate_id": "cand_vite_strict_port_001",
+  "workflow_name": "vite-safe-dev-server",
+  "intent": "Start the Vite web frontend on an authorized port and verify backend CORS origin connectivity.",
+  "inputs": {
+    "app_dir": "apps/web",
+    "permitted_ports": [5173, 5174],
+    "backend_health_url": "http://localhost:4000/api/health",
+    "timeout_seconds": 15
+  },
+  "preconditions": [
+    "Node.js >= 18 is installed and available in PATH",
+    "Backend server is running on http://localhost:4000",
+    "Port configuration file exists at packages/config/ports.json"
+  ],
+  "permitted_changes": [
+    "Spawn Vite dev server process bound strictly to an available port in permitted_ports",
+    "Write ephemeral process tracking file to apps/web/.vite.pid",
+    "Terminate stale Vite process owned by the current workspace if unresponsive"
+  ],
+  "postconditions": [
+    "Vite server responds with HTTP 200 on an authorized port (5173 or 5174)",
+    "Backend health endpoint returns HTTP 200 when probed with Origin header matching active Vite port",
+    "Emits structured JSON to stdout: {\"status\": \"ready\", \"port\": <port>, \"pid\": <pid>}"
+  ],
+  "invariants": [
+    "Must NOT bind unpermitted ports (e.g. 5175+) under port contention",
+    "Must NOT modify backend CORS whitelist in apps/api/src/server.js",
+    "Must NOT terminate unrelated processes occupying ports outside permitted_ports"
+  ],
+  "rerun_behaviour": "If a healthy Vite instance is already running on a permitted port and passing the CORS origin health check, return existing PID and port without spawning duplicate processes.",
+  "failure_behaviour": "If all permitted ports are occupied or backend rejects CORS handshake, exit with code 1, output structured JSON error: {\"status\": \"error\", \"reason\": \"all_permitted_ports_exhausted\", \"tried\": [5173, 5174]}, and clean up any spawned child processes.",
+  "acceptance_checks": [
+    "Case A (Clean): Port 5173 free -> binds 5173, passes origin check, exits 0 with structured JSON",
+    "Case B (Contention): Port 5173 busy, 5174 free -> binds 5174 with strictPort, passes origin check, exits 0",
+    "Case C (Exhaustion): Ports 5173 and 5174 busy -> refuses unpermitted port 5175, exits 1 with structured error",
+    "Case D (Idempotency): Second invocation returns existing PID without spawning duplicate process"
+  ]
+}
