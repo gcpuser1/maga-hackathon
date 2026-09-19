@@ -7,11 +7,13 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from hashlib import sha1
+import json
 from pathlib import Path
 import re
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
+from maga import llm
 from maga.schemas import Candidate, Entry, Evidence
 
 THRESHOLD = 3  # distinct sessions
@@ -48,8 +50,7 @@ _WRAPPER = re.compile(
 )
 _INLINE = ("<<HEREDOC", "<SCRIPT>")
 _NOT_A_STEP = {"echo", "sleep", "cd", "true", ":"}
-# ponytail: a keyword test stands in for the Gemini classification of 5.1 rule 3;
-# pass `is_correction` to `find` when the model route exists.
+# A free prefilter. The model judges only the corrections that reach the threshold (5.1 rule 3).
 _CORRECTION = re.compile(
     r"^\s*(no\b|nope\b|don'?t\b|do not\b|stop\b|wrong\b|never\b|that'?s (?:wrong|not)\b"
     r"|you (?:missed|forgot|should)\b|why did you\b|check\b)",
@@ -182,22 +183,29 @@ def _corrections(
     seen: dict[tuple[str, ...], _Seen],
     entries: list[Entry],
     normal: dict[str, str],
-    is_correction: Callable[[str], bool],
 ) -> None:
     previous: Entry | None = None
     for entry in entries:
         if entry.entry_type == "tool_call":
             previous = entry if normal.get(entry.entry_id) else None
-        elif entry.entry_type == "user_input" and previous and is_correction(entry.content or ""):
+        elif (
+            entry.entry_type == "user_input"
+            and previous
+            and keyword_correction(entry.content or "")
+        ):
             _note(seen, (normal[previous.entry_id],), [previous]).notes.add(entry.content or "")
             previous = None
 
 
 def find(
     sessions: Iterable[list[Entry]],
-    is_correction: Callable[[str], bool] = keyword_correction,
+    confirm: Callable[[str, list[str]], bool] = lambda _command, _messages: True,
 ) -> list[Candidate]:
-    """Return the ranked candidates that appear in at least THRESHOLD distinct sessions."""
+    """Return the ranked candidates that appear in at least THRESHOLD distinct sessions.
+
+    `confirm` validates a correction before its promotion: it gets the flagged command and the
+    human messages, and a False drops the candidate. Sequence counting never calls it.
+    """
     seen: _Tally = {kind: defaultdict(lambda: _Seen(example=[])) for kind in _TYPE_ORDER}
     for entries in sessions:
         actions = [e for e in entries if e.entry_type == "tool_call"]
@@ -206,11 +214,14 @@ def find(
         normal = {entry_id: " && ".join(found) for entry_id, found in parts.items()}
         _sequences(seen["repetition"], [(step, e) for e in commands for step in parts[e.entry_id]])
         _pairs(seen["error_fix"], actions, normal)
-        _corrections(seen["correction"], entries, normal, is_correction)
+        _corrections(seen["correction"], entries, normal)
 
     flagged = {
         kind: {key: s for key, s in found.items() if len(s.sessions) >= THRESHOLD}
         for kind, found in seen.items()
+    }
+    flagged["correction"] = {
+        key: s for key, s in flagged["correction"].items() if confirm(key[0], sorted(s.notes))
     }
     # A part of a longer flagged sequence, seen in the same sessions, is the same procedure.
     repeats = flagged["repetition"]
@@ -229,10 +240,27 @@ def find(
     )
 
 
+class _Judgement(BaseModel):
+    is_correction: bool
+    reason: str
+
+
+def gemini_confirms(command: str, messages: list[str]) -> bool:
+    """Ask Gemini if the human messages correct the agent step. One call for each candidate."""
+    instructions = (
+        "A coding agent ran `command`. In several sessions a person then wrote one of `messages`. "
+        "Answer is_correction true only if the messages tell the agent that this step was wrong "
+        "or must be done another way. A new task, thanks, or a question is not a correction."
+    )
+    data = json.dumps({"command": command, "messages": messages})
+    return llm.ask(_Judgement, instructions, data).is_correction
+
+
 def run(state: Path) -> list[Candidate]:
     """FIND over the stored entries; replace the stored candidates with the result."""
     files = sorted((state / "entries").glob("*.json"))
-    candidates = find(_ENTRIES.validate_json(path.read_bytes()) for path in files)
+    sessions = (_ENTRIES.validate_json(path.read_bytes()) for path in files)
+    candidates = find(sessions, gemini_confirms)
     target = state / "candidates"
     target.mkdir(parents=True, exist_ok=True)
     for old in target.glob("*.json"):
