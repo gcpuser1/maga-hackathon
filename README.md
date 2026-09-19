@@ -46,15 +46,15 @@ To try it with no private data, read the three synthetic sessions:
 
 | Stage | Module | State |
 | :--- | :--- | :--- |
-| READ | `maga.reader` | Built. Imports `user` and `assistant` lines, joins calls to results, counts malformed lines. |
-| FIND | `maga.finder` | Built. The correction classifier is a keyword test, not yet a Gemini call. |
+| READ | `maga.reader` | Built. Imports `user` and `assistant` lines, joins calls to results, counts malformed lines, tracks import checkpoints. |
+| FIND | `maga.finder` | Built. The correction classifier is a Gemini call (`maga.llm.ask`), not a keyword test. |
 | DECIDE | `maga.triage` | Built. Verified against the real Gemini API. |
 | BUILD | `maga.generator` | Built. Verified against the real Gemini API. |
 | CHECK Gate 1 | `maga.verifier` | Built. Runs in CI on a clean machine. |
 | CHECK Gate 2 | `maga.gate2` | Built as a host run. The credential-free container of `ARCHITECTURE.md` 9.2 is not built. |
-| PROPOSE | `maga.publisher` | Not built. |
+| PROPOSE | `maga.publisher` | Built. Verified against a real Git repository and a local bare remote. |
 
-Not built: chunking of long sessions, import checkpoints, the Pydantic AI Gateway route, Logfire traces, the Modal stretch, and the worktree scenario.
+Not built: chunking of long sessions, the Pydantic AI Gateway route, the Modal stretch, and the worktree scenario.
 
 ## Development
 
