@@ -19,6 +19,11 @@ Important notes:
 
 - [Architecture](docs/architecture/ARCHITECTURE.md): The five stages (FIND, TRIAGE, BUILD, CHECK, SHIP), the exact mining rules, the candidate state machine and revision budget, the seven Pydantic schemas, the golden contract fixture, the two verification gates, the demo scenarios, and the walking-skeleton build plan.
 
+## Tests to implement
+
+- [Functional test specifications](docs/testing/FUNCTIONAL_TESTS.md): 69 tests of behaviour that a user or the demo audience can observe, by stage. Each test has a fixture, steps, an expected result, and the defect that must make it fail. Ends with the open questions.
+- [Technical test specifications](docs/testing/TECHNICAL_TESTS.md): 120 tests of the internals: schemas, Claude Code transcript parsing, normalisation, sequence counting, the state machine, the revision budget, both gates, and the publisher. Suggested order for the demo: `TT-SCH`, `TT-NRM`, `TT-SEQ`, `TT-ACC`, then `FT-VIT`.
+
 ## Tooling
 
 - [justfile](justfile): Every recipe with a one-line description. `just` with no argument lists them.
