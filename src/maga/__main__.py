@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 import sys
 
+import logfire
 from pydantic_ai.exceptions import UserError
 
-from maga import finder, gate2, generator, reader, triage, verifier
+from maga import finder, gate2, generator, llm, publisher, reader, triage, verifier
 from maga.schemas import Candidate, Package, Verdict
 
 STATE = Path(".maga/state")
@@ -29,34 +30,42 @@ def main() -> int:
     verify = stages.add_parser("verify", help="Gate 1, then Gate 2, with one revision budget")
     verify.add_argument("candidate_id")
     verify.add_argument("demo_repo", type=Path, nargs="?", default=Path("fixtures/demo-monorepo"))
+    propose = stages.add_parser("propose", help="ask for package approval, then open the PR")
+    propose.add_argument("candidate_id")
+    propose.add_argument("demo_repo", type=Path, nargs="?", default=Path("fixtures/demo-monorepo"))
     args = parser.parse_args()
 
-    if args.stage == "verify":
-        return _check(args.candidate_id, args.demo_repo)
+    llm.load_env()
+    # With no LOGFIRE_TOKEN, nothing leaves the machine.
+    logfire.configure(send_to_logfire="if-token-present", service_name="maga", console=False)
 
-    if args.stage == "check":
-        return _check(args.candidate_id)
+    stage: str = args.stage
+    if stage == "read":
+        return _read(args.paths)
+    if stage == "find":
+        return _find()
+    if stage in {"verify", "propose"}:
+        return {"verify": _check, "propose": _propose}[stage](args.candidate_id, args.demo_repo)
+    return {"decide": _decide, "build": _build, "check": _check}[stage](args.candidate_id)
 
-    if args.stage == "build":
-        return _build(args.candidate_id)
 
-    if args.stage == "decide":
-        return _decide(args.candidate_id)
-
-    if args.stage == "find":
-        candidates = finder.run(STATE)
-        for place, c in enumerate(candidates[:10], 1):
-            sys.stdout.write(
-                f"{place:>2}. {c.evidence_type:<10} sessions={c.frequency:<3} "
-                f"occurrences={c.evidence.observed_occurrences:<4} {c.candidate_id}\n"
-                + "".join(f"      {line[:150]}\n" for line in c.normalized_template.splitlines())
-            )
-        sys.stdout.write(f"{len(candidates)} candidates in {STATE / 'candidates'}\n")
-        return 0 if candidates else 1
-    paths = args.paths or sorted((Path.home() / ".claude/projects").glob("*/*.jsonl"))
+def _read(paths: list[Path]) -> int:
+    paths = paths or sorted((Path.home() / ".claude/projects").glob("*/*.jsonl"))
     report = reader.read(paths, STATE)
     sys.stdout.write(json.dumps(report) + "\n")
     return 0 if report["files"] else 1
+
+
+def _find() -> int:
+    candidates = finder.run(STATE)
+    for place, c in enumerate(candidates[:10], 1):
+        sys.stdout.write(
+            f"{place:>2}. {c.evidence_type:<10} sessions={c.frequency:<3} "
+            f"occurrences={c.evidence.observed_occurrences:<4} {c.candidate_id}\n"
+            + "".join(f"      {line[:150]}\n" for line in c.normalized_template.splitlines())
+        )
+    sys.stdout.write(f"{len(candidates)} candidates in {STATE / 'candidates'}\n")
+    return 0 if candidates else 1
 
 
 def _build(candidate_id: str) -> int:
@@ -105,6 +114,32 @@ def _package(candidate_id: str) -> Package:
         test_path=str(staged / "tests" / "test_start.py"),
         contract=generator.approved_contract(STATE, candidate_id),
     )
+
+
+def _propose(candidate_id: str, demo_repo: Path) -> int:
+    staged = STAGED / candidate_id
+    try:
+        contract = generator.approved_contract(STATE, candidate_id)
+    except (FileNotFoundError, PermissionError) as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
+    files = sorted(str(p.relative_to(staged)) for p in staged.rglob("*") if p.is_file())
+    sys.stdout.write(
+        f"package {publisher.package_hash(staged)}\n" + "".join(f"  {f}\n" for f in files)
+    )
+    if input("Approve exactly this package for a pull request? [y/N] ").strip().lower() != "y":
+        sys.stdout.write("not approved: nothing is published\n")
+        return 1
+    publisher.approve_package(STATE, candidate_id, staged)
+    target = demo_repo / ".claude" / "skills" / contract.workflow_name
+    try:
+        destination = publisher.Destination(Path.cwd(), target)
+        url = publisher.publish(STATE, candidate_id, staged, destination, publisher.GITHUB)
+    except publisher.PublishError as error:
+        sys.stderr.write(f"not published: {error}\n")
+        return 1
+    sys.stdout.write(f"{url}\n")
+    return 0
 
 
 def _decide(candidate_id: str) -> int:

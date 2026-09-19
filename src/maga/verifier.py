@@ -14,6 +14,7 @@ import tempfile
 import time
 from typing import Literal
 
+from maga.publisher import package_hash
 from maga.schemas import Package, Verdict
 
 MAX_TOTAL_REVISIONS = 3
@@ -142,6 +143,8 @@ def _one_pass(
     verdict = None
     for gate in gates:
         verdict = gate(package, total_revisions)
+        # PROPOSE publishes a package only with a Gate 2 pass for this exact content.
+        verdict.test_results["package_sha256"] = package_hash(Path(package.skill_path).parent)
         text = verdict.model_dump_json(indent=2)
         name = f"{package.candidate_id}_gate{verdict.gate_number}_verdict.json"
         (folder / name).write_text(text)

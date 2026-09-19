@@ -246,15 +246,15 @@ def test_cor_002_an_ordinary_message_is_not_a_correction() -> None:
 
 def test_cor_003_a_classifier_rejection_stops_the_promotion() -> None:
     sessions = [_session(f"sess-u{n}", *P3) for n in range(3)]
-    found = find(sessions, is_correction=lambda _: False)
+    found = find(sessions, confirm=lambda _command, _messages: False)
     assert "correction" not in {c.evidence_type for c in found}
 
 
 def test_cor_005_a_tool_result_is_never_a_correction_candidate() -> None:
     asked: list[str] = []
 
-    def classify(message: str) -> bool:
-        asked.append(message)
+    def classify(command: str, messages: list[str]) -> bool:
+        asked.extend([command, *messages])
         return True
 
     sessions: list[list[Entry]] = []
@@ -271,4 +271,21 @@ def test_cor_005_a_tool_result_is_never_a_correction_candidate() -> None:
         )
         sessions.append([call, result, after])
     assert "correction" not in {c.evidence_type for c in find(sessions, classify)}
+    assert asked == []
+
+
+def test_cor_003_the_model_judges_a_correction_once_and_never_a_repetition() -> None:
+    asked: list[tuple[str, list[str]]] = []
+
+    def confirm(command: str, messages: list[str]) -> bool:
+        asked.append((command, messages))
+        return True
+
+    sessions = [_session(f"sess-u{n}", *P3) for n in range(3)] + [_p1(n) for n in "abc"]
+    found = find(sessions, confirm)
+    assert asked == [("kill -9 <PID>", ["don't kill that process"])]  # one call, redacted form
+    assert found[0].evidence_type == "correction"
+    # Below the threshold nothing is promoted, so the model is not asked at all.
+    asked.clear()
+    find(sessions[:2], confirm)
     assert asked == []

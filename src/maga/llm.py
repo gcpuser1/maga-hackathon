@@ -1,9 +1,11 @@
 """The one route to the model: Gemini through Pydantic AI."""
 
+from functools import cache
 import os
 from pathlib import Path
 
 from google.genai.types import ThinkingLevel
+import logfire
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import Model
@@ -16,7 +18,7 @@ _TIMEOUT_SECONDS = 60
 _SERVER_ERROR = 500
 
 
-def _load_env() -> None:
+def load_env() -> None:
     env = Path(".env")
     for line in env.read_text().splitlines() if env.exists() else []:
         key, separator, value = line.partition("=")
@@ -24,10 +26,17 @@ def _load_env() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
+@cache
+def _observe() -> None:
+    """Give each model call a span. The entry point decides where the spans go."""
+    logfire.instrument_pydantic_ai()
+
+
 def ask[T](output_type: type[T], instructions: str, data: str, model: Model | str = MODEL) -> T:
     """One validated answer. `data` is redacted and sent as data, never as instructions."""
-    _load_env()
+    load_env()
     os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+    _observe()
     agent = Agent(
         model,
         output_type=output_type,

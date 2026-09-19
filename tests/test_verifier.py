@@ -16,7 +16,7 @@ PROBE = Path(__file__).parents[1] / "src" / "maga" / "gate1" / "probe_start.py"
 PACKAGE = Package(
     candidate_id="cand_vite_strict_port_001",
     script_path=str(PROBE),
-    skill_path="SKILL.md",
+    skill_path=str(FIXTURES / "SKILL.md"),  # its folder is the package that the verdict hashes
     test_path=str(SUITE),
     contract=Contract.model_validate_json(GOLDEN),
 )
@@ -91,7 +91,9 @@ def test_a_suite_that_passes_a_probe_is_invalid_and_never_grades_the_script(
     verdict = check(PACKAGE, tmp_path, lambda log: revisions.append(log) or PACKAGE, gates)
     assert verdict.outcome == "fail"
     assert verdict.stderr_log.startswith("suite_invalid")
-    assert verdict.test_results == {"probe:noop": "NOT rejected"}
+    assert verdict.test_results["probe:noop"] == "NOT rejected"
+    assert "probe:skip_origin" not in verdict.test_results
+    assert len(verdict.test_results["package_sha256"]) == 64
     assert "script" not in calls
     assert revisions == []  # no revision of the script can repair a weak suite
 
