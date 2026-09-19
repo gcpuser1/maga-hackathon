@@ -50,8 +50,8 @@ def _stub(script_runs: list[Run], probe: Run = FAILED) -> tuple[list[str], Calla
 def test_acc_the_suite_passes_the_correct_script_and_fails_each_defect(
     variant: str, failed: set[str]
 ) -> None:
-    code, out, _ = run_suite(PROBE, SUITE, variant)
-    assert code == (1 if failed else 0), out
+    code, out, err = run_suite(PROBE, SUITE, variant)
+    assert code == (1 if failed else 0), out + err
     assert "7 passed" in out or failed
     for name in failed:
         assert any(line.startswith("FAILED") and name in line for line in out.splitlines()), out
@@ -64,8 +64,8 @@ def test_g1i_001_no_network_is_reachable(tmp_path: Path) -> None:
         "import socket\n\n\ndef test_dns_and_route():\n"
         "    socket.create_connection(('1.1.1.1', 53), timeout=3).close()\n"
     )
-    code, out, _ = run_suite(PROBE, online)
-    assert code == 1, out
+    code, out, err = run_suite(PROBE, online)
+    assert code == 1, out + err
     assert "Network is unreachable" in out or "OSError" in out
 
 

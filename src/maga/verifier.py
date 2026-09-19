@@ -5,6 +5,7 @@ The suite grades the generated script only after it has failed the known-bad pro
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 import re
 import shutil
@@ -48,8 +49,17 @@ def _docker(args: list[str], stdin: str | None = None) -> Run:
     return code, done.stdout, done.stderr
 
 
+@cache
+def _image() -> Run:
+    """Build the Gate 1 image one time in each process. Docker's layer cache makes a rebuild cheap."""
+    return _docker(["build", "-q", "-t", IMAGE, "-"], _DOCKERFILE)
+
+
 def run_suite(script: Path, tests: Path, variant: str = "") -> Run:
     """Run `tests` against `script` in a fresh container with no network."""
+    built = _image()
+    if built[0] != 0:
+        return None, built[1], f"infrastructure: the Gate 1 image did not build\n{built[2]}"
     with tempfile.TemporaryDirectory(prefix="maga_gate1_") as temp:
         # The checks live outside the staged workspace, and the container mounts them read-only.
         suite = Path(temp) / "suite"
@@ -92,14 +102,8 @@ def gate1_verdict(
     tests = Path(package.test_path)
     results: dict[str, str] = {}
     outcome: Outcome = "pass"
-    code, out, err = (
-        _docker(["build", "-q", "-t", IMAGE, "-"], _DOCKERFILE)
-        if suite is run_suite
-        else (0, "", "")
-    )
-    if code != 0:
-        outcome = "inconclusive"
-    for variant in PROBES if outcome == "pass" else ():
+    code, out, err = 0, "", ""
+    for variant in PROBES:
         code, out, err = suite(_HARNESS / "probe_start.py", tests, variant)
         results[f"probe:{variant}"] = "rejected" if code == _PYTEST_FAILED else "NOT rejected"
         if code is None:
