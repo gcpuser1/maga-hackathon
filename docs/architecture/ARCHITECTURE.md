@@ -3,17 +3,20 @@
 **Date:** 19 September 2026  
 **Event:** London Tech: Europe Agentic AI Hack  
 **Author:** MAGA Team Architecture Handoff  
-**Status:** Architecture Proposal & Implementation Plan (Draft PR)
+**Status:** Agreed Architecture & Build Specification (Draft PR #2)
 
 ---
 
 ## 1. Executive Summary & Problem Framing
 
 ### 1.1 The Problem
-Coding agents repeatedly reconstruct the same project-specific procedures. This consumes time and tokens. Required steps can be missed, even when documented. Successful sessions contain useful procedures; failed attempts reveal missing steps and checks. The system uses both as evidence for reusable automation.
+Coding agents repeatedly reconstruct the same project-specific procedures across sessions. This consumes developer time and model tokens. Required steps can be missed, even when documented. Successful sessions contain useful procedures; failed attempts reveal missing steps, wrong ports, and missing checks. MAGA mines both as evidence for reusable automation.
+
+> ### 📊 Empirical Evidence (Reported by Laurence)
+> Across **34 developer session transcripts**, we observed **185 Vite dev server launches** across **15+ distinct ports**. When Vite encountered occupied ports, it auto-incremented beyond permitted backend CORS whitelist boundaries (e.g. binding port 5175 when the backend only whitelisted 5173 and 5174), leading to silent frontend-backend disconnects and runtime `HTTP 403 Forbidden` CORS rejections.
 
 ### 1.2 Our Solution
-**MAGA** discovers repeated procedures in session transcripts, assesses their suitability for automation, formalizes an **automation contract**, generates tested parameterized scripts paired with discoverable workspace skills, verifies execution and unprompted agent reuse, and publishes human-reviewable proposals.
+**MAGA** discovers repeated procedures across transcripts (`FIND`), triages suitability and formalizes an automation contract (`TRIAGE`), requires human approval of the contract and acceptance checks before generation, generates parameterized scripts and discoverable skills (`BUILD`), validates deterministic execution and unprompted agent reuse (`CHECK`), and publishes human-reviewable proposals (`SHIP`).
 
 Reference architecture specification: [From session transcripts to tested tools](https://from-session-transcripts-to-tested-tools.ledger-rocket.here.now/)
 
@@ -24,39 +27,42 @@ Reference architecture specification: [From session transcripts to tested tools]
 
 ## 2. Terminology & Core Decisions
 
-### 2.1 Standard Terminology
-Aligned strictly with the team's specification:
-* **Session:** One recorded interaction between a person and a coding agent, including tool use.
-* **Transcript:** The recorded messages, tool calls, and tool results from a session.
-* **Transcript entry:** One recorded item: a message, a tool call, or a tool result (used uniformly instead of generic "event").
-* **Task:** A goal the agent tries to complete, spanning one or many transcript entries.
-* **Procedure:** A sequence of steps to achieve a specific outcome across tasks.
-* **Candidate:** A procedure proposed for automation, pending triage and verification.
-* **Triage:** The decision to generate new automation, reuse existing automation, request clarification, or reject.
-* **Script:** Executable code that performs the procedure and checks its result.
-* **Skill:** Instructions teaching an agent when and how to call the script.
-* **Automation contract:** The formal specification of inputs, preconditions, permitted changes, postconditions, rerun behaviour, failure behaviour, and acceptance checks.
-* **Package:** The script, skill, tests, and contract documentation for one procedure.
-* **Verifier:** The component that tests a package against its contract (Execution Correctness) and evaluates unprompted agent discovery (Agent Reuse). Out comes: `pass`, `fail`, or `inconclusive`.
-* **Repository publisher:** Proposes a Git branch and human-reviewable PR/MR.
+### 2.1 Standard Terminology & The 5-Stage Lifecycle
+The architecture uses 5 standardized stage names across all modules and documentation:
+1. **`FIND`:** Discovers recurring procedures across $\ge 3$ distinct session transcripts, extracts error-and-fix sequences, and identifies user correction patterns.
+2. **`TRIAGE`:** Evaluates automation suitability against existing tools (`package.json`, `justfile`, `~/.claude/skills/`, etc.), synthesizes the formal `Contract`, and presents it with acceptance checks for **human sign-off**.
+3. **`BUILD`:** Dispatches independent test synthesis (seeing only the contract) and script/skill generation into staged artifacts (`.maga/artifacts/staged/`).
+4. **`CHECK`:** Verifies deterministic script execution in zero-network isolation (Gate 1) and proves agent reuse across 5 fresh runs (Gate 2, pass $\ge 4/5$).
+5. **`SHIP`:** Proposes a clean Git branch and human-reviewable PR with runtime logs, token deltas, and Logfire trace evidence.
 
 ### 2.2 Core Architectural Decisions
-1. **Target Coding Agents & Standard Format:** Supports **Claude Code** (`~/.claude/projects/*/*.jsonl`) and **Antigravity** (`~/.gemini/antigravity-cli/brain/*/...`). Standardized output format is **`SKILL.md`** workspace skills paired with parameterized shell scripts.
-2. **Independent Acceptance Check Synthesis:** Test generation is strictly decoupled from script implementation. Two separate model calls are dispatched from the immutable `AutomationContract`:
-   - *Test Generator Call:* Sees only the contract specification and repository constraints; never inspects the generated script.
-   - *Script Generator Call:* Sees the contract and repository constraints.
-   This guarantees objective, non-circular verification.
-3. **Local-First & Asynchronous:** Runs locally; processes transcripts asynchronously from historical logs rather than intercepting real-time LLM inference.
-4. **Repository Separation:** 
+1. **Target Coding Agent (Scope Decision):**
+   - **Primary MVP Target:** **Claude Code** is the primary target for transcript parsing (`~/.claude/projects/*/*.jsonl`) and unprompted agent reuse testing (`claude -p "<task>"`).
+   - **Multi-Agent Extension:** **Antigravity** (`~/.gemini/antigravity-cli/brain/*/...` and `agy --print`) is supported via the shared `Entry` schema.
+   - Standard output format is **`SKILL.md`** workspace skills paired with parameterized shell scripts.
+2. **Human Approval Before BUILD:**
+   - Once `TRIAGE` synthesizes a candidate `Contract` and its deterministic acceptance checks, the system requires **explicit human approval of the contract and checks** before `BUILD` begins.
+   - This prevents generating unwanted scripts and guarantees that tests evaluate human-approved constraints.
+   - Final pull request approval by repository maintainers remains a separate, final control in `SHIP`.
+3. **Independent Acceptance Check Synthesis:**
+   - Test generation is strictly decoupled from script implementation. Two separate model calls are dispatched from the approved `Contract`:
+     - *Test Generator Call:* Sees only the contract specification and repository constraints; never inspects the generated script.
+     - *Script Generator Call:* Sees the contract and repository constraints.
+   - While separate calls do not magically guarantee objective perfection, decoupling ensures tests evaluate contract compliance rather than script idiosyncrasies.
+4. **Local-First & Asynchronous:** Runs locally; processes transcripts asynchronously from historical logs rather than intercepting real-time LLM inference.
+5. **Repository Separation:** 
    - **MAGA Repository (`ufs-lab/maga-hackathon`):** Houses the discovery agent, contract synthesizer, isolated validator, evaluation harness, and documentation.
-   - **Demonstration Monorepo (Target):** The subject of observation where generated automation (`.agents/skills/`, helper scripts, and tests) is proposed and evaluated.
-5. **Local File & Artifact Storage (No SQLite in MVP):** Per team agreement, all state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`. Raw transcripts, credentials, and local tokens remain strictly outside committed Git source.
-6. **Execution Isolation vs. Unconfined Developer Execution:** Temporary directories or Git worktrees provide *clean filesystem checkouts*, not process or security containment. Setting a working directory or `--add-dir` does NOT constitute an OS security boundary, nor does environment variable stripping prevent reading host credential files (`~/.ssh/`, `~/.config/gh/`, etc.). Therefore:
-   - For permission-disabled evaluation (`--dangerously-skip-permissions`), evaluation **must run in an actual isolated container or virtualized sandbox** (e.g. Modal) where host files and credentials do not exist.
-   - When running locally without containerization, execution is explicitly designated as **unconfined developer-host execution** running with the user's full privileges.
-7. **Shared Bounded Revision Budget with Fixed Acceptance Contract:** A strict combined limit across both Gate 1 (Script Validation) and Gate 2 (Agent Reuse) of `MAX_TOTAL_REVISIONS = 3`. If the budget is exhausted at either gate, the candidate transitions to `UNVERIFIED` and is not promoted to a PR. During repair, the **acceptance contract remains strictly fixed**; only the generated script implementation or skill prompt description may be revised. Modifying the contract itself invalidates prior triage and requires restarting the lifecycle.
-8. **Existing Tool Lookup Before Synthesis:** Prior to synthesizing new scripts, MAGA inspects repository tool definitions (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`). If an existing tool fulfills the procedure, MAGA wraps or documents it in a `SKILL.md` rather than generating redundant duplicate code.
-9. **Human Approval:** No automatic merging into upstream branches. The final product is a pull request containing code, skill, test suite, and execution trace evidence.
+   - **Demonstration Monorepo (Target):** The subject of observation (`fixtures/demo-monorepo`) where generated automation is evaluated.
+6. **Local File & Artifact Storage (No SQLite in MVP):** All state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`.
+7. **Two-Gate Verification & Isolation Boundaries:**
+   - **Gate 1 (Execution Correctness):** Disposable sandbox with **zero external network access** (`--network none`) to prove the script runs deterministically offline.
+   - **Gate 2 (Autonomous Agent Reuse):** Disposable sandbox with **model API access only** (outbound HTTPS to Anthropic/Gemini/Modal endpoints only, with local loopback and repo credentials strictly inaccessible).
+   - *Local Fallback:* Recognized explicitly as unconfined developer host execution without security guarantees.
+8. **Reuse Pass Rule (Repeatability Threshold):**
+   - Tested across **5 fresh temporary worktree runs** with ordinary task prompts.
+   - Threshold for passing Gate 2: **At least 4 successful runs out of 5** (80% repeatability) where the agent discovers the skill and solves the task in $\le 2$ turns without user intervention.
+9. **Shared Bounded Revision Budget with Fixed Contract:** A strict combined limit across Gate 1 and Gate 2 of `MAX_TOTAL_REVISIONS = 3`. The approved `Contract` remains strictly fixed during repair; only the generated script or skill prompt may be revised.
+10. **Existing Tool Lookup Before Synthesis:** Prior to synthesizing new scripts, MAGA inspects repository tools (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`) and user-level tools (`~/.claude/scripts/`, `~/.claude/skills/`). If an existing tool fulfills the procedure, MAGA wraps it in a `SKILL.md` rather than generating redundant duplicate code.
 
 ---
 
@@ -225,14 +231,37 @@ flowchart TD
 
 The system implements the 6 core components defined in the architecture specification, using local JSON file storage:
 
-| Specification Component | Python Module | Responsibility | Primary Inputs | Primary Outputs |
+| Stage / Component | Python Module | Responsibility | Primary Inputs | Primary Outputs |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Transcript reader** | `maga.reader` | Reads Claude Code (`~/.claude/projects/*/*.jsonl`) and Antigravity (`~/.gemini/.../transcript*.jsonl`) transcripts, normalizes steps into unified `Entry` objects, redacts sensitive tokens, and tracks incremental session watermarks. Never executes commands from transcripts. | Raw JSONL session logs | Normalized `Entry` records in `.maga/state/entries/` |
-| **2. Procedure finder** | `maga.finder` | Groups related entries into `Episode` objects, mines recurring command signatures and tool sequences with threshold $\ge 2$ occurrences (or $\ge 3$ repair attempts in one session), applies token normalization (ports, paths, hashes, timestamps), and produces `Candidate` and `Evidence` records. | `Entry` records | `Candidate` and `Evidence` records in `.maga/state/candidates/` |
-| **3. Automation triage** | `maga.triage` | Checks existing repo tools (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`) to avoid duplication. Dispatches contract synthesis to the Modal GPU open-weight model via Pydantic AI Gateway in Logfire. Validates `AutomationContract` schemas. | Candidates + repo tool definitions | `AutomationContract` in `.maga/state/contracts/` |
-| **4. Package generator** | `maga.generator` | Performs two independent generation steps: (1) Contract $\rightarrow$ Test generator (sees only contract, never script), and (2) Contract $\rightarrow$ Script & `SKILL.md` generator. Stages all files in `.maga/artifacts/staged/<candidate_id>/`. | `AutomationContract` | Staged `Package` (`scripts/`, `SKILL.md`, `tests/`) |
-| **5. Verifier** | `maga.verifier` | Evaluates package against contract in clean subprocess (Gate 1), and tests unprompted discovery by a fresh agent session in $\le 2$ turns (Gate 2). Enforces shared revision budget (`MAX_TOTAL_REVISIONS = 3`). Outputs `Verdict`. | Staged `Package` + Acceptance checks | `Verdict` (`pass`, `fail`, `inconclusive`) in `.maga/state/verification/` |
-| **6. Repository publisher** | `maga.publisher` | Generates proposal branch and human-reviewable PR with runtime execution evidence, token delta metrics, and Logfire trace links. A human maintainer makes the final merge decision. | Verified `Package` + `Verdict` | Git branch & GitHub Pull Request |
+| **1. Ingest (`FIND`)** | `maga.reader` | Reads Claude Code (`~/.claude/projects/*/*.jsonl`) and Antigravity (`~/.gemini/.../transcript*.jsonl`) transcripts, normalizes steps into unified `Entry` objects, redacts sensitive tokens, and tracks incremental session watermarks. Never executes commands from transcripts. | Raw JSONL session logs | Normalized `Entry` records in `.maga/state/entries/` |
+| **2. Mine (`FIND`)** | `maga.finder` | Groups related entries into `Episode` objects, mines recurring command signatures and tool sequences with threshold **$\ge 3$ distinct sessions**, extracts error-and-fix sequences, detects user corrections with model validation, applies parameter normalization (ports, paths, hashes, timestamps), and produces `Candidate` and `Evidence` records. | `Entry` records | `Candidate` and `Evidence` records in `.maga/state/candidates/` |
+| **3. Triage (`TRIAGE`)** | `maga.triage` | Checks existing repo tools (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`) and user-level tools (`~/.claude/scripts/`, `~/.claude/skills/`) to avoid duplication. Dispatches contract synthesis to the Modal GPU open-weight model via Pydantic AI Gateway in Logfire. Presents `Contract` and acceptance checks for **human sign-off**. | Candidates + repo & user tool definitions | Human-approved `Contract` in `.maga/state/contracts/` |
+| **4. Generate (`BUILD`)** | `maga.generator` | Performs two independent generation steps: (1) Contract $\rightarrow$ Test generator (sees only contract, never script), and (2) Contract $\rightarrow$ Script & `SKILL.md` generator. Stages all files in `.maga/artifacts/staged/<candidate_id>/`. | Approved `Contract` | Staged `Package` (`scripts/`, `SKILL.md`, `tests/`) |
+| **5. Verify (`CHECK`)** | `maga.verifier` | Evaluates package against contract in zero-network isolation (Gate 1), and tests unprompted discovery across 5 fresh runs (Gate 2, pass $\ge 4/5$). Enforces shared revision budget (`MAX_TOTAL_REVISIONS = 3`). Outputs `Verdict`. | Staged `Package` + Acceptance checks | `Verdict` (`pass`, `fail`, `inconclusive`) in `.maga/state/verification/` |
+| **6. Publish (`SHIP`)** | `maga.publisher` | Generates proposal branch and human-reviewable PR with runtime execution evidence, token delta metrics, and Logfire trace links. A human maintainer makes the final merge decision. | Verified `Package` + `Verdict` | Git branch & GitHub Pull Request |
+
+### 5.1 Exact Mining & Extraction Rules (`FIND`)
+1. **Promising Candidate Threshold:**
+   - A procedure is flagged as a candidate when the **identical normalised command sequence appears across $\ge 3$ distinct sessions**.
+2. **Error-and-Fix Sequence Detection:**
+   - A step with a non-zero exit code or stderr error pattern followed within $\le 3$ subsequent tool actions by a command modifying parameters/flags and exiting 0.
+   - *Example:* `vite` (fails on occupied 5173) $\rightarrow$ `lsof -i :5173` $\rightarrow$ `vite --port 5174` (exits 0).
+3. **User Correction Extraction:**
+   - When the user explicitly intervenes with a corrective instruction (e.g. *"no, use port 5174"*, *"don't kill that process"*, *"check CORS settings"*), MAGA flags the preceding agent step as a defect and uses the correction to formulate negative constraints and invariants in the contract.
+   - User corrections are semantically validated using Gemini prompt classification before candidate promotion.
+4. **Parameter Normalisation Rules:**
+   - **File & Directory Paths:** Absolute paths (e.g. `/home/user/workspace/apps/web`) are normalized to relative repository tokens (e.g. `$REPO_ROOT/apps/web`).
+   - **Port Numbers:** Specific port occurrences (`5173`, `5174`, `3000`, `4000`, `8080`) are extracted and converted to typed port list parameters (`$PORT_LIST`).
+   - **Ephemeral Tokens:** Timestamps, process IDs, git commit hashes, and UUIDs are abstracted into template parameters.
+5. **Existing Tool Lookup Paths:**
+   Before formalizing a new automation script, MAGA searches:
+   - `package.json` (npm/pnpm/yarn scripts)
+   - `justfile` / `Makefile`
+   - `pyproject.toml`
+   - `.agents/skills/` (workspace skills)
+   - `~/.claude/scripts/` and `~/.claude/skills/` (user-level Claude tools)
+   - `~/.gemini/config/skills/` (user-level Antigravity skills)
+   If a matching script already exists, MAGA synthesizes only a discoverable `SKILL.md` wrapper rather than generating duplicate code.
 
 ---
 
@@ -358,7 +387,7 @@ class Candidate(BaseModel):
     triage_status: Literal["pending", "accepted", "rejected", "clarification_needed"] = "pending"
     rejection_reason: Optional[str] = None
 
-class AutomationContract(BaseModel):
+class Contract(BaseModel):
     """Formal specification governing script implementation and independent test synthesis."""
     candidate_id: str
     workflow_name: str
@@ -372,13 +401,16 @@ class AutomationContract(BaseModel):
     failure_behaviour: str = Field(..., description="Safe termination, cleanup traps, and error reporting")
     acceptance_checks: List[str] = Field(..., description="Deterministic test cases for Gate 1")
 
+# Alias for backwards compatibility
+AutomationContract = Contract
+
 class Package(BaseModel):
     """Staged automation bundle ready for verification and proposal."""
     candidate_id: str
     script_path: str
     skill_path: str
     test_path: str
-    contract: AutomationContract
+    contract: Contract
 
 class Verdict(BaseModel):
     """Evaluation outcome for Gate 1 and Gate 2 verification."""
@@ -392,6 +424,52 @@ class Verdict(BaseModel):
     token_delta_percent: Optional[float] = None
     execution_duration_ms: int
     timestamp: datetime
+```
+
+### 7.2 Canonical Golden Contract Fixture (`maga/fixtures/golden_contract.json`)
+
+Below is the complete, schema-valid JSON contract used as the generator's golden prompt example and the walking skeleton's first test fixture:
+
+```json
+{
+  "candidate_id": "cand_vite_strict_port_001",
+  "workflow_name": "vite-safe-dev-server",
+  "intent": "Start the Vite web frontend on an authorized port and verify backend CORS origin connectivity.",
+  "inputs": {
+    "app_dir": "apps/web",
+    "permitted_ports": [5173, 5174],
+    "backend_health_url": "http://localhost:4000/api/health",
+    "timeout_seconds": 15
+  },
+  "preconditions": [
+    "Node.js >= 18 is installed and available in PATH",
+    "Backend server is running on http://localhost:4000",
+    "Port configuration file exists at packages/config/ports.json"
+  ],
+  "permitted_changes": [
+    "Spawn Vite dev server process bound strictly to an available port in permitted_ports",
+    "Write ephemeral process tracking file to apps/web/.vite.pid",
+    "Terminate stale Vite process owned by the current workspace if unresponsive"
+  ],
+  "postconditions": [
+    "Vite server responds with HTTP 200 on an authorized port (5173 or 5174)",
+    "Backend health endpoint returns HTTP 200 when probed with Origin header matching active Vite port",
+    "Emits structured JSON to stdout: {\"status\": \"ready\", \"port\": <port>, \"pid\": <pid>}"
+  ],
+  "invariants": [
+    "Must NOT bind unpermitted ports (e.g. 5175+) under port contention",
+    "Must NOT modify backend CORS whitelist in apps/api/src/server.js",
+    "Must NOT terminate unrelated processes occupying ports outside permitted_ports"
+  ],
+  "rerun_behaviour": "If a healthy Vite instance is already running on a permitted port and passing the CORS origin health check, return existing PID and port without spawning duplicate processes.",
+  "failure_behaviour": "If all permitted ports are occupied or backend rejects CORS handshake, exit with code 1, output structured JSON error: {\"status\": \"error\", \"reason\": \"all_permitted_ports_exhausted\", \"tried\": [5173, 5174]}, and clean up any spawned child processes.",
+  "acceptance_checks": [
+    "Case A (Clean): Port 5173 free -> binds 5173, passes origin check, exits 0 with structured JSON",
+    "Case B (Contention): Port 5173 busy, 5174 free -> binds 5174 with strictPort, passes origin check, exits 0",
+    "Case C (Exhaustion): Ports 5173 and 5174 busy -> refuses unpermitted port 5175, exits 1 with structured error",
+    "Case D (Idempotency): Second invocation returns existing PID without spawning duplicate process"
+  ]
+}
 ```
 
 ---
@@ -445,30 +523,28 @@ To avoid contradiction, the fixture defines **one consistent configuration** and
 
 ---
 
-## 9. Two-Gate Verification: Sandboxing & Execution Boundaries
+### 9. Two-Gate Verification: Sandboxing & Execution Boundaries
 
-A key architectural distinction is that **temporary directories and Git worktrees provide clean workspace checkouts, NOT process or security sandboxing**. Neither setting a working directory nor passing `--add-dir` constitutes an OS security boundary; an agent with shell access can navigate up directories and inspect host paths. Similarly, stripping environment variables does not prevent reading on-disk credential files (`~/.ssh/`, `~/.config/gh/`, `~/.netrc`). We define explicit execution boundaries for both gates:
+A key architectural distinction is that **temporary directories and Git worktrees provide clean workspace checkouts, NOT process or security sandboxing**. Neither setting a working directory nor passing `--add-dir` constitutes an OS security boundary; an agent with shell access can navigate up directories and inspect host paths. Similarly, stripping environment variables does not prevent reading on-disk credential files (`~/.ssh/`, `~/.config/gh/`, `~/.netrc`). We define explicit, enforceable execution boundaries for both gates:
 
-### 9.1 Gate 1: Script Execution Correctness
-* **Objective:** Verify that the synthesized script satisfies all 4 acceptance cases (clean, contention, exhaustion, idempotency) defined in the fixed contract.
-* **Modal Ephemeral Sandbox (Containerized):**
-  - Validation tests execute inside a disposable Linux container (`modal.Function`) with pinned capabilities and an ephemeral filesystem.
-  - The container has no access to host filesystem paths, host network interfaces, or ambient host API keys.
-  - Test fixtures are copied into the container; disposable resources are automatically destroyed when the container terminates.
+### 9.1 Gate 1: Deterministic Script Execution Correctness
+* **Objective:** Verify that the synthesized script satisfies all 4 acceptance cases (clean, contention, exhaustion, idempotency) defined in the approved `Contract`.
+* **Network Isolation Policy:** **Zero external network access (`--network none`).**
+  - Validation tests execute inside a disposable container (`modal.Function` or Docker) with all external outbound networking disabled.
+  - Test fixtures and dependencies are baked in or mounted ephemerally; scripts must execute deterministically offline without network calls.
 * **Local Subprocess Fallback (Unconfined Execution):**
-  - When running locally without Modal, tests execute in a clean Git worktree under a dedicated temporary directory (`/tmp/maga_test_XXXXXX/`).
-  - **Explicit Boundary:** Local execution is explicitly recognized as **unconfined developer-host execution** running with the user's full privileges. Local cleanup traps (`EXIT INT TERM`) and localhost binding provide developer convenience and hygiene, not security isolation.
+  - When running locally without a container sandbox, tests execute in a clean Git worktree under `/tmp/maga_test_XXXXXX/`.
+  - **Explicit Boundary:** Local execution is explicitly designated as **unconfined developer-host execution** running with the user's full privileges. Process cleanup traps provide hygiene, not security isolation.
 
 ### 9.2 Gate 2: Autonomous Agent Discovery & Reuse
-* **Objective:** Prove that a fresh Antigravity session receives an ordinary, unprompted task description (e.g., *"Start the web frontend and verify backend connectivity"*) and autonomously discovers and executes the skill without being handed the script name.
-* **Execution Boundary for Headless `agy --dangerously-skip-permissions`:**
-  - Running `agy` with permission checks disabled allows the agent to execute shell commands without user confirmation prompts.
-  - **Required Execution Model:**
-    1. **Containerized Sandbox (Preferred):** To safely evaluate permission-disabled runs, `agy` **must run inside an actual isolated container or virtualized sandbox** (e.g. Modal or Docker) where host credentials and parent filesystems do not exist.
-    2. **Local Fallback (Unconfined Execution):** If executed on the developer host without containerization, permissions must either be retained (interactive confirmation) OR local execution must be explicitly documented and treated as **completely unconfined execution with host privileges**. Never claim directory confinement or security isolation from CLI flags.
-    3. **Discovery Assertion:** The verifier inspects the agent's transcript to confirm:
-       - The agent inspected `.agents/skills/vite-dev-server/SKILL.md` via `view_file` based on description relevance.
-       - The agent executed `scripts/start.sh` rather than ad-hoc bash trial-and-error.
+* **Objective:** Prove that a fresh, unprompted agent session receives an ordinary goal description (e.g. *"Start the web frontend and verify backend connectivity"*) and autonomously discovers and executes the skill without being handed the script name.
+* **Network Policy:** **Model API access only.**
+  - Outbound network access is strictly restricted to required model API endpoints (Anthropic, Gemini, Modal).
+  - Ambient developer credentials (`~/.ssh/`, `~/.config/gh/`, `~/.aws/`) and repository write tokens are strictly excluded from the runner.
+* **Repeatability Procedure & Pass Threshold:**
+  - Evaluated across **5 fresh temporary project worktrees** (`claude -p "<task>"` for Claude Code, or `agy --print` for Antigravity).
+  - **Pass Threshold:** **At least 4 successful runs out of 5** (80% repeatability).
+  - **Run Criteria:** The agent must inspect the skill via `SKILL.md`, invoke the script (`scripts/start.sh`), and verify the backend handshake within **$\le 2$ turns** without human intervention or fatal errors.
 
 ---
 
@@ -498,7 +574,7 @@ A key architectural distinction is that **temporary directories and Git worktree
 
 * **Gateway Optimization Rule (Without Touching Agent Code):**
   - **Rule Name:** `Style: Terse Contract Synthesizer` (Action: `Transform`).
-  - **Injected Instruction:** *"Emit strictly valid, minimal JSON adhering to the AutomationContract schema. Omit all conversational preamble, reasoning paragraphs, and sign-offs."*
+  - **Injected Instruction:** *"Emit strictly valid, minimal JSON adhering to the Contract schema. Omit all conversational preamble, reasoning paragraphs, and sign-offs."*
   - **Experimental Target:** Target an experimental **40%–60% reduction in output tokens** compared to the unoptimized baseline run on the identical prompt and model.
 
 * **Schema Validation vs. Semantic & Behavioral Correctness:**
@@ -531,7 +607,7 @@ A key architectural distinction is that **temporary directories and Git worktree
 | **Modal Credit Code Unretrieved** | Cannot spin up remote Modal GPU endpoint without active account credits. | Core MVP runs sandbox tests locally using clean worktrees; Modal runner is implemented as a pluggable backend ready to activate immediately upon credential entry. |
 | **Pydantic Gateway Latency** | Gateway rule propagation or Logfire trace generation could delay live demos. | Run baseline and optimized traces early (Phase 4); capture deterministic local logs and static trace URLs in PR. |
 | **`gcpuser1` GitHub Permissions** | User account has `READ` access to `ufs-lab/maga-hackathon`. Direct push to `origin` is blocked. | Created fork `gcpuser1/maga-hackathon`. All PRs and branches are pushed to fork and proposed across repositories via `gh pr create`. |
-| **Local Unconfined Execution** | Running `agy --dangerously-skip-permissions` locally lacks kernel isolation. | Strict directory confinement, environment secret scrubbing, and signal-trapped process cleanup. |
+| **Local Unconfined Execution** | Running headless agent runners locally lacks kernel isolation. | Local host execution is explicitly documented as unconfined developer execution; true isolation is provided in container/sandbox runs with network policies. |
 
 ---
 
@@ -540,27 +616,27 @@ A key architectural distinction is that **temporary directories and Git worktree
 **Submission Deadline:** 19:00 BST
 
 ```text
-Phase 1: Schemas & Walking Skeleton Core (15:10 - 15:50)
-- maga/schemas.py: Implement the 7 Pydantic models (Entry, Episode, Candidate, Evidence, AutomationContract, Package, Verdict).
-- Golden Contract: Write the canonical hand-written AutomationContract for the port-aware dev server.
-- maga.generator & maga.verifier: Implement independent test generation and Gate 1 (subprocess) / Gate 2 (agy) runners.
+Phase 1: Schemas & Walking Skeleton Core (15:20 - 16:00)
+- maga/schemas.py: Implement the 7 Pydantic models (Contract, Entry, Episode, Candidate, Evidence, Package, Verdict).
+- maga/fixtures/golden_contract.json: Embed the canonical golden Contract and schema validation unit tests.
+- maga.generator (BUILD) & maga.verifier (CHECK): Implement independent test generation and Gate 1 (subprocess) / Gate 2 (5-run agent reuse harness) with the golden contract.
 
-Phase 2: Demonstration Monorepo Fixture & Baseline Traces (15:50 - 16:30)
+Phase 2: Demonstration Monorepo Fixture & Baseline Traces (16:00 - 16:30)
 - fixtures/demo-monorepo: Setup Vite + Express CORS workspace with strict ports [5173, 5174].
-- Capture genuine baseline failure traces under port contention and port exhaustion.
+- Capture genuine baseline failure traces under port contention and port exhaustion across Claude Code / Antigravity sessions.
 
-Phase 3: Mining Engine & Triage Gateway (16:30 - 17:15)
+Phase 3: Mining Layer & Triage Gateway in Parallel (16:30 - 17:15)
 - maga.reader: Ingest Claude Code and Antigravity JSONL session logs.
-- maga.finder: Cluster command sequences (threshold >= 2), extract parameters, check existing repo tools.
+- maga.finder: Mine command sequences (threshold >= 3 sessions), error-and-fix pairs, user corrections, and repo/user tool lookup (~/.claude/skills/).
 - maga.triage: Pydantic AI Gateway in Logfire -> Modal GPU model with optimization rule (token reduction).
 
 Phase 4: End-to-End Verification & Evidence Assembly (17:15 - 18:00)
-- Run full MAGA pipeline on captured traces: Discover -> Contract -> Generate -> Gate 1 -> Gate 2.
-- maga.publisher: Generate proposal PR with trace proof, token deltas, and before/after comparisons.
+- Connect full MAGA loop: FIND -> TRIAGE -> Human Contract Approval -> BUILD -> CHECK (Gate 1 & Gate 2) -> SHIP.
+- maga.publisher: Generate proposal PR with runtime execution evidence, token deltas, and before/after comparisons.
 
 Phase 5: Documentation & 2-Minute Video Demo (18:00 - 18:45)
 - Complete root README.md with clear diagrams, reproduction instructions, and Logfire trace links.
-- Record 2-minute demonstration video highlighting discovery, independent testing, and unprompted agent reuse.
+- Record 2-minute demonstration video highlighting problem, repetition discovery, independent testing, and unprompted agent reuse.
 
 Phase 6: Submission & Final Polish (18:45 - 19:00)
 - Verify repository clean status, PR links, and submit hackathon entry before 19:00 BST.

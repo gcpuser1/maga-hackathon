@@ -16,17 +16,15 @@ This document governs coding agent development within the MAGA repository (`ufs-
 * **Scope check:** Before writing code, inspect open pull requests (`gh pr list`) and remote branches to verify no overlapping team work.
 
 ### Beat 2: Build (`/code-structure`)
-* Write modular, service-layer code conforming to the 6 MAGA architecture components:
-  1. `maga.reader`: Ingestion and secret scrubbing for Claude Code (`.jsonl`) and Antigravity transcripts.
-  2. `maga.storage`: Structured local JSON state management (`.maga/state/`). No SQLite in the MVP.
-  3. `maga.finder`: Procedure repetition mining (threshold $\ge 2$ occurrences), parameter normalization, and repo tool lookup (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`).
-  4. `maga.triage`: Suitability assessment and contract synthesis (dispatched via Pydantic AI Gateway in Logfire to Modal GPU).
-  5. `maga.generator`: Staging of `scripts/`, `SKILL.md`, and contract unit tests into `.maga/artifacts/staged/`.
-  6. `maga.verifier`: Two-gate verification (Gate 1 contract checks + Gate 2 fresh unprompted reuse in $\le 2$ turns).
-  7. `maga.publisher`: Evidence PR creation against target repositories.
+* Write modular, service-layer code conforming to the 5 MAGA pipeline stages:
+  1. `maga.reader` & `maga.finder` (`FIND`): Ingestion for Claude Code (`~/.claude/projects/*/*.jsonl`) and Antigravity (`~/.gemini/.../transcript*.jsonl`), secret scrubbing, procedure repetition mining ($\ge 3$ distinct sessions), error-and-fix detection, user correction classification, and tool lookup (`package.json`, `justfile`, `~/.claude/skills/`).
+  2. `maga.triage` (`TRIAGE`): Suitability assessment, contract synthesis via Pydantic AI Gateway in Logfire, and **human sign-off on Contract + acceptance checks before generation**.
+  3. `maga.generator` (`BUILD`): Independent test synthesis (contract-only prompt) and parameterized script + `SKILL.md` synthesis into `.maga/artifacts/staged/`.
+  4. `maga.verifier` (`CHECK`): Two-gate verification (Gate 1 zero-network contract checks + Gate 2 fresh agent reuse across 5 runs, pass $\ge 4/5$ in $\le 2$ turns).
+  5. `maga.publisher` (`SHIP`): Evidence PR creation against target repositories with trace URLs and token metrics.
 * Maintain strict separation: orchestration logic (triage/contract decisions) remains separated from operational mechanics (subprocesses, CLI drivers).
-* Enforce schema invariants with Pydantic (`Entry`, `Episode`, `Candidate`, `Evidence`, `AutomationContract`, `Package`, `Verdict`).
-* **Independent Test Synthesis:** Test generation must be strictly decoupled from script synthesis. Acceptance checks and tests are synthesized directly from the `AutomationContract` without inspecting the generated script implementation.
+* Enforce schema invariants with Pydantic (`Contract`, `Entry`, `Episode`, `Candidate`, `Evidence`, `Package`, `Verdict`).
+* **Independent Test Synthesis:** Test generation must be strictly decoupled from script synthesis. Acceptance checks and tests are synthesized directly from the approved `Contract` without inspecting the generated script implementation.
 
 ### Beat 3: Prove (`/evidence-driven-testing`)
 * Never make unsupported claims of correctness. Back all pull requests with verifiable runtime logs:
@@ -56,15 +54,17 @@ This document governs coding agent development within the MAGA repository (`ufs-
 3. **Execution Sandboxing Reality:**
    - Local temporary directories and worktrees provide clean checkouts, **not** OS security boundaries.
    - Local execution is unconfined host execution.
-   - Permission-disabled headless evaluation (`agy --dangerously-skip-permissions`) must run inside actual isolated containers (Modal / Docker) during formal evaluation.
-4. **Immutable Acceptance Contracts During Repair:**
+   - Formal evaluation runs inside container sandboxes: Gate 1 enforces zero external network (`--network none`); Gate 2 enforces model-API-only access without repository credentials.
+4. **Human Approval Before BUILD:**
+   - The candidate `Contract` and acceptance checks require explicit human approval before script generation starts.
+5. **Immutable Acceptance Contracts During Repair:**
    - In automated repair loops, the acceptance contract is strictly fixed.
    - The repair loop refines the **script implementation or skill prompt**, never the contract itself.
    - A shared budget of `MAX_TOTAL_REVISIONS = 3` applies across both Gate 1 and Gate 2.
-5. **Independent Test Generation:**
+6. **Independent Test Generation:**
    - Acceptance tests evaluate contract compliance, never script idiosyncrasies.
-   - Test generator prompts receive only the `AutomationContract` and repo constraints, never the generated script.
-6. **Multi-Agent Git Protocol:**
+   - Test generator prompts receive only the `Contract` and repo constraints, never the generated script.
+7. **Multi-Agent Git Protocol:**
    - The active development account (`gcpuser1`) operates on fork `gcpuser1/maga-hackathon`.
    - Create PRs using `gh pr create --repo ufs-lab/maga-hackathon --head gcpuser1:<branch>`.
    - Never force-push with plain `--force`; use `--force-with-lease` only on your own branch.
