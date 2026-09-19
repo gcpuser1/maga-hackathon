@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""A stand-in for `vite`: same port behaviour, no Node, no network.
+
+With --strictPort it exits 1 on a busy port. Without it, it moves to the next port, as Vite does.
+"""
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+
+
+class Page(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"<html>vite</html>")
+
+    def log_message(self, *args):
+        pass
+
+
+args = sys.argv[1:]
+port = int(args[args.index("--port") + 1]) if "--port" in args else 5173
+while True:
+    try:
+        server = HTTPServer(("127.0.0.1", port), Page)
+        break
+    except OSError:
+        if "--strictPort" in args:
+            sys.exit(f"Error: Port {port} is already in use")
+        port += 1
+print(f"  Local: http://localhost:{port}/", flush=True)
+server.serve_forever()

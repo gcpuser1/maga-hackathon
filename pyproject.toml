@@ -45,6 +45,15 @@ ignore = [
 unfixable = ["PL", "N"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/maga/verifier.py" = [
+    "S603",     # Gate 1 runs `docker` with a fixed argument list; no shell, no transcript text
+    "S607",     # `docker` comes from PATH, as on any developer machine
+]
+"src/maga/gate1/*.py" = [
+    "S603",     # The harness runs the script under test, and the probe starts vite: that is their job
+    "S607",     # `vite` comes from PATH by contract (generator.CONSTRAINTS)
+    "INP001",   # Copied into the Gate 1 container as plain files, never imported as a package
+]
 "tests/**/*.py" = [
     "S101",     # pytest uses assert
     "PLR2004",  # Literal expected values are the point of a test
