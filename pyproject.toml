@@ -45,6 +45,10 @@ ignore = [
 unfixable = ["PL", "N"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/maga/gate2.py" = [
+    "S603",     # Gate 2 runs `claude -p` with a fixed argument list; the task text is a constant
+    "S607",     # `claude` comes from PATH
+]
 "src/maga/verifier.py" = [
     "S603",     # Gate 1 runs `docker` with a fixed argument list; no shell, no transcript text
     "S607",     # `docker` comes from PATH, as on any developer machine
