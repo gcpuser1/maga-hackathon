@@ -1,0 +1,42 @@
+name: CI
+
+# Runs the same gates as the local git hooks, so a red PR check means
+# `just check` (and, on a PR, `just preflight`'s extra gates) would also be
+# red locally. See justfile and CONTRIBUTING.md for what each recipe does.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - uses: extractions/setup-just@v3
+
+      - uses: taiki-e/install-action@v2
+        if: github.event_name == 'pull_request'
+        with:
+          tool: gitleaks
+
+      - name: Gates (lock, format, lint, types, tests)
+        run: just check
+
+      - name: Reject new suppression comments (PR diff only)
+        if: github.event_name == 'pull_request'
+        run: just suppressions "origin/${{ github.base_ref }}...HEAD"
+
+      - name: Secret scan (gitleaks, PR commits only)
+        if: github.event_name == 'pull_request'
+        run: gitleaks detect --redact --no-banner --log-opts "origin/${{ github.base_ref }}..HEAD"
