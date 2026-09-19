@@ -1,6 +1,6 @@
 # Agent Workflow for MAGA (Mining Agent Generated Automation)
 
-This document governs coding agent development within the MAGA repository (`ufs-lab/maga-hackathon`). Every task moves through the four beats below, backed by installed agent skills (`~/.gemini/config/skills/`).
+This document governs coding agent development within the MAGA repository (`ufs-lab/maga-hackathon`). Every task moves through the four beats below, backed by the agent skills in section 5.
 
 ---
 
@@ -74,12 +74,13 @@ This section adapts the `ponytail` skill by Dietrich Gebert (MIT): <https://gith
 * **Scope check:** Before writing code, inspect open pull requests (`gh pr list`) and remote branches to verify no overlapping team work.
 
 ### Beat 2: Build (`/code-structure`)
-* Write modular, service-layer code conforming to the 5 MAGA pipeline stages:
-  1. `maga.reader` & `maga.finder` (`FIND`): Ingestion for Claude Code (`~/.claude/projects/*/*.jsonl`) and Antigravity (`~/.gemini/.../transcript*.jsonl`), secret scrubbing, procedure repetition mining ($\ge 3$ distinct sessions), error-and-fix detection, user correction classification, and tool lookup (`package.json`, `justfile`, `~/.claude/skills/`).
-  2. `maga.triage` (`TRIAGE`): Suitability assessment, contract synthesis via Pydantic AI Gateway in Logfire, and **human sign-off on Contract + acceptance checks before generation**.
-  3. `maga.generator` (`BUILD`): Independent test synthesis (contract-only prompt) and parameterized script + `SKILL.md` synthesis into `.maga/artifacts/staged/`.
-  4. `maga.verifier` (`CHECK`): Two-gate verification (Gate 1 zero-network contract checks + Gate 2 fresh agent reuse across 5 runs, pass $\ge 4/5$ in $\le 2$ turns).
-  5. `maga.publisher` (`SHIP`): Evidence PR creation against target repositories with trace URLs and token metrics.
+* Write modular, service-layer code conforming to the 6 MAGA pipeline stages (`maga.triage` implements `DECIDE`; `maga.publisher` implements `PROPOSE`):
+  1. `maga.reader` (`READ`): Reads Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) once and scrubs secrets.
+  2. `maga.finder` (`FIND`): Procedure repetition mining ($\ge 3$ distinct sessions), error-and-fix detection, and user correction classification. Ranks corrections first, error-and-fix pairs second, and successful repetition third.
+  3. `maga.triage` (`DECIDE`): Existing-tool lookup (`package.json`, `justfile`, `~/.claude/skills/`), one outcome (reuse existing, generate, fix at source, clarify, or reject), contract synthesis by Gemini via Pydantic AI Gateway in Logfire, and **human sign-off on Contract + acceptance checks before generation**.
+  4. `maga.generator` (`BUILD`): Independent test synthesis (contract-only prompt) and parameterized Python script + `SKILL.md` synthesis into `.maga/artifacts/staged/`.
+  5. `maga.verifier` (`CHECK`): Two-gate verification (Gate 1 zero-network contract checks in a local container, where the suite must reject a no-op script and deliberately broken variants + Gate 2 fresh agent reuse across 5 runs, pass $\ge 4/5$ in $\le 2$ turns).
+  6. `maga.publisher` (`PROPOSE`): Checks human approval bound to the exact package, commits only approved files, creates the evidence PR with trace URLs and token metrics, and reads back the result.
 * Maintain strict separation: orchestration logic (triage/contract decisions) remains separated from operational mechanics (subprocesses, CLI drivers).
 * Enforce schema invariants with Pydantic (`Contract`, `Entry`, `Episode`, `Candidate`, `Evidence`, `Package`, `Verdict`).
 * **Independent Test Synthesis:** Test generation must be strictly decoupled from script synthesis. Acceptance checks and tests are synthesized directly from the approved `Contract` without inspecting the generated script implementation.
@@ -157,10 +158,6 @@ just check
 # Everything the pre-push hook runs, on a clean checkout of HEAD
 just preflight
 
-# Verify Antigravity CLI and discovery
-agy --version
-agy --help
-
 # Pydantic Logfire authentication (when testing Gateway)
 logfire auth
 ```
@@ -178,7 +175,7 @@ logfire auth
 
 ## 5. Skill Sources & Attribution
 
-The development workflow skills are installed in the agent runtime environment (`~/.gemini/config/skills/`):
+The development workflow skills are installed in the coding agent's own skill directory:
 
 | Skill | Description | Upstream Source / Attribution |
 | :--- | :--- | :--- |
