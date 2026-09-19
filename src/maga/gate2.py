@@ -60,14 +60,20 @@ def run_passed(entries: list[Entry], exit_code: int) -> bool:
     )
 
 
+def install_skill(package: Package, repo: Path) -> Path:
+    """Put the skill and its script where Claude Code loads project skills. The tests stay out."""
+    skill = repo / ".claude" / "skills" / package.contract.workflow_name
+    (skill / "scripts").mkdir(parents=True, exist_ok=True)
+    shutil.copy(package.skill_path, skill / "SKILL.md")
+    shutil.copy(package.script_path, skill / "scripts" / "start.py")
+    return skill
+
+
 def fresh_workdir(package: Package, demo_repo: Path) -> Path:
     """A new copy of the demo repository with the skill where Claude Code loads project skills."""
     workdir = Path(tempfile.mkdtemp(prefix="maga_gate2_")) / demo_repo.name
     shutil.copytree(demo_repo, workdir)
-    skill = workdir / ".claude" / "skills" / package.contract.workflow_name
-    (skill / "scripts").mkdir(parents=True)
-    shutil.copy(package.skill_path, skill / "SKILL.md")
-    shutil.copy(package.script_path, skill / "scripts" / "start.py")
+    install_skill(package, workdir)
     return workdir
 
 

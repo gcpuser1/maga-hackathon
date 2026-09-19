@@ -79,8 +79,18 @@ def decide(candidate: Candidate, tools: list[str], model: Model | str = llm.MODE
     return decision
 
 
-def record(state: Path, candidate: Candidate, decision: Decision, *, approved: bool) -> Path:
-    """Store the outcome, the approval, and (only when approved) the contract."""
+def record(
+    state: Path,
+    candidate: Candidate,
+    decision: Decision,
+    *,
+    approved: bool,
+    approved_by: Literal["person", "automatic"] = "person",
+) -> Path:
+    """Store the outcome, the approval, and (only when approved) the contract.
+
+    `approved_by` tells the truth about the approval: `automatic` means that no person saw it.
+    """
     contract_json = decision.contract.model_dump_json(indent=2) if decision.contract else None
     status = _STATUS[decision.outcome] if approved or not decision.contract else "rejected"
     reason = decision.reason if approved or not decision.contract else "contract not approved"
@@ -97,6 +107,7 @@ def record(state: Path, candidate: Candidate, decision: Decision, *, approved: b
                 "candidate_id": candidate.candidate_id,
                 "outcome": decision.outcome,
                 "approved": approved,
+                "approved_by": approved_by,
                 "contract_sha256": sha256(contract_json.encode()).hexdigest()
                 if contract_json
                 else None,

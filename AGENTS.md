@@ -114,8 +114,11 @@ This section adapts the `ponytail` skill by Dietrich Gebert (MIT): <https://gith
    - Local temporary directories and worktrees provide clean checkouts, **not** OS security boundaries.
    - Local execution is unconfined host execution.
    - Formal evaluation runs inside container sandboxes: Gate 1 enforces zero external network (`--network none`); Gate 2 enforces model-API-only access without repository credentials.
-4. **Human Approval Before BUILD:**
-   - The candidate `Contract` and acceptance checks require explicit human approval before script generation starts.
+4. **Approval Before BUILD:**
+   - In the interactive path (`python -m maga decide`), the candidate `Contract` and acceptance checks require explicit human approval before script generation starts.
+   - In unattended mode (`python -m maga auto`), no person approves the contract. The gates are the control: a skill is installed only after its package passes every gate, and a failed or inconclusive package is never installed.
+   - Each approval record states who approved: `approved_by` is `person` or `automatic`. No record may claim a person for an automatic approval.
+   - `BUILD` and `CHECK` still refuse a contract whose text differs from the recorded SHA-256.
 5. **Immutable Acceptance Contracts During Repair:**
    - In automated repair loops, the acceptance contract is strictly fixed.
    - The repair loop refines the **script implementation or skill prompt**, never the contract itself.

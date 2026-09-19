@@ -44,6 +44,7 @@ The architecture uses 6 standardized stage names across all modules and document
 2. **Human Approval Before BUILD:**
    - Once `DECIDE` synthesizes a candidate `Contract` and its deterministic acceptance checks, the system requires **explicit human approval of the contract and checks** before `BUILD` begins.
    - This prevents generating unwanted scripts and guarantees that tests evaluate human-approved constraints.
+   - **Unattended mode (decided by the team on 19 September 2026 for the demo):** `python -m maga auto` reads, finds, decides, builds, checks, and installs with no question, so that skills appear in `.claude/skills/` by themselves. The control moves from a person to the gates: only a package that passes every gate is installed. The approval record says `approved_by: automatic`. The interactive path keeps the human approval.
    - Before `PROPOSE`, a human approves the exact verified package. The publisher binds that approval to the package hash, commits only approved files, and reads back the created review request.
    - Final pull request approval by repository maintainers remains a separate, final control.
 3. **Independent Acceptance Check Synthesis:**
