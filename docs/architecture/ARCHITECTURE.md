@@ -41,17 +41,22 @@ Aligned strictly with the team's specification:
 * **Repository publisher:** Proposes a Git branch and human-reviewable PR/MR.
 
 ### 2.2 Core Architectural Decisions
-1. **Target Coding Agent:** Antigravity (CLI version `1.2.7` empirically verified).
-2. **Local-First & Asynchronous:** Runs locally; processes transcripts asynchronously from historical logs rather than intercepting real-time LLM inference.
-3. **Repository Separation:** 
+1. **Target Coding Agents & Standard Format:** Supports **Claude Code** (`~/.claude/projects/*/*.jsonl`) and **Antigravity** (`~/.gemini/antigravity-cli/brain/*/...`). Standardized output format is **`SKILL.md`** workspace skills paired with parameterized shell scripts.
+2. **Independent Acceptance Check Synthesis:** Test generation is strictly decoupled from script implementation. Two separate model calls are dispatched from the immutable `AutomationContract`:
+   - *Test Generator Call:* Sees only the contract specification and repository constraints; never inspects the generated script.
+   - *Script Generator Call:* Sees the contract and repository constraints.
+   This guarantees objective, non-circular verification.
+3. **Local-First & Asynchronous:** Runs locally; processes transcripts asynchronously from historical logs rather than intercepting real-time LLM inference.
+4. **Repository Separation:** 
    - **MAGA Repository (`ufs-lab/maga-hackathon`):** Houses the discovery agent, contract synthesizer, isolated validator, evaluation harness, and documentation.
    - **Demonstration Monorepo (Target):** The subject of observation where generated automation (`.agents/skills/`, helper scripts, and tests) is proposed and evaluated.
-4. **Local File & Artifact Storage (No SQLite in MVP):** Per team agreement, all state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`. Raw transcripts, credentials, and local tokens remain strictly outside committed Git source.
-5. **Execution Isolation vs. Unconfined Developer Execution:** Temporary directories or Git worktrees provide *clean filesystem checkouts*, not process or security containment. Setting a working directory or `--add-dir` does NOT constitute an OS security boundary, nor does environment variable stripping prevent reading host credential files (`~/.ssh/`, `~/.config/gh/`, etc.). Therefore:
+5. **Local File & Artifact Storage (No SQLite in MVP):** Per team agreement, all state, checkpoints, entries, candidates, contracts, and test runs are stored as structured **local JSON files and artifact directories** under `.maga/state/` and `.maga/artifacts/`. Raw transcripts, credentials, and local tokens remain strictly outside committed Git source.
+6. **Execution Isolation vs. Unconfined Developer Execution:** Temporary directories or Git worktrees provide *clean filesystem checkouts*, not process or security containment. Setting a working directory or `--add-dir` does NOT constitute an OS security boundary, nor does environment variable stripping prevent reading host credential files (`~/.ssh/`, `~/.config/gh/`, etc.). Therefore:
    - For permission-disabled evaluation (`--dangerously-skip-permissions`), evaluation **must run in an actual isolated container or virtualized sandbox** (e.g. Modal) where host files and credentials do not exist.
    - When running locally without containerization, execution is explicitly designated as **unconfined developer-host execution** running with the user's full privileges.
-6. **Shared Bounded Revision Budget with Fixed Acceptance Contract:** A strict combined limit across both Gate 1 (Script Validation) and Gate 2 (Agent Reuse) of `MAX_TOTAL_REVISIONS = 3`. If the budget is exhausted at either gate, the candidate transitions to `UNVERIFIED` and is not promoted to a PR. During repair, the **acceptance contract remains strictly fixed**; only the generated script implementation or skill prompt description may be revised. Modifying the contract itself invalidates prior triage and requires restarting the lifecycle.
-7. **Human Approval:** No automatic merging into upstream branches. The final product is a pull request containing code, skill, test suite, and execution trace evidence.
+7. **Shared Bounded Revision Budget with Fixed Acceptance Contract:** A strict combined limit across both Gate 1 (Script Validation) and Gate 2 (Agent Reuse) of `MAX_TOTAL_REVISIONS = 3`. If the budget is exhausted at either gate, the candidate transitions to `UNVERIFIED` and is not promoted to a PR. During repair, the **acceptance contract remains strictly fixed**; only the generated script implementation or skill prompt description may be revised. Modifying the contract itself invalidates prior triage and requires restarting the lifecycle.
+8. **Existing Tool Lookup Before Synthesis:** Prior to synthesizing new scripts, MAGA inspects repository tool definitions (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`). If an existing tool fulfills the procedure, MAGA wraps or documents it in a `SKILL.md` rather than generating redundant duplicate code.
+9. **Human Approval:** No automatic merging into upstream branches. The final product is a pull request containing code, skill, test suite, and execution trace evidence.
 
 ---
 
@@ -167,44 +172,50 @@ Progressive Disclosure:
 ```mermaid
 flowchart TD
     subgraph S1["1. Ingestion & Preprocessing"]
-        T["Antigravity Session Transcripts<br/>(~/.gemini/.../transcript_full.jsonl)"] --> ING["Transcript Reader & Redactor<br/>(maga.reader)"]
-        ING --> DB[("Local JSON State Store<br/>(.maga/state/)")]
+        T1["Claude Code Transcripts<br/>(~/.claude/projects/*/*.jsonl)"] --> ING["Transcript Reader & Redactor<br/>(maga.reader)"]
+        T2["Antigravity Transcripts<br/>(~/.gemini/.../transcript_full.jsonl)"] --> ING
+        ING --> DB[("Local JSON State Store<br/>(.maga/state/entries/)")]
     end
 
     subgraph S2["2. Task Mining & Triage"]
-        DB --> MINER["Task Finder<br/>(maga.finder)"]
-        MINER --> CLUST["Procedure Clustering & Frequency Counter"]
-        REPO_CONF["Target Monorepo Configuration<br/>(Existing scripts, package.json, CORS whitelist)"] --> TRIAGE["Automation Triage Engine<br/>(maga.triage)"]
+        DB --> MINER["Procedure Finder<br/>(maga.finder)"]
+        MINER --> CLUST["Clustering, Normalization & Token Counter<br/>(Threshold >= 2 occurrences)"]
+        REPO_CONF["Existing Repo Tools<br/>(package.json, justfile, Makefile, .agents/skills/)"] --> TRIAGE["Automation Triage Engine<br/>(maga.triage)"]
         CLUST --> TRIAGE
     end
 
-    subgraph S3["3. Contract Formalization & Partner Pipeline"]
-        TRIAGE -->|Suitable Workflow| GW["Pydantic AI Gateway in Logfire<br/>(Gateway Optimization Rule & Guardrail)"]
+    subgraph S3["3. Contract Formalization & Independent Synthesis"]
+        TRIAGE -->|Suitable Procedure| GW["Pydantic AI Gateway in Logfire<br/>(Optimization Rule & Ingress Guardrail)"]
         GW --> MODAL_LLM["Open-Weight Model on Modal GPU<br/>(e.g., Qwen-2.5-Coder-7B-Instruct)"]
-        MODAL_LLM --> CSYN["Contract Synthesizer & Pydantic Schema Validation<br/>(maga.contract)"]
-        TRIAGE -->|Existing Tool Exists| SKILL_ONLY["Enhance Skill Metadata"]
+        MODAL_LLM --> CSYN["Contract Formalization & Validation<br/>(maga.schemas.AutomationContract)"]
+        
+        CSYN -->|Contract Only| TEST_GEN["Independent Test Synthesizer<br/>(Sees Contract only, NOT script)"]
+        CSYN -->|Contract + Context| SCRIPT_GEN["Script & Skill Synthesizer<br/>(maga.generator)"]
+        
+        TRIAGE -->|Existing Tool Exists| SKILL_ONLY["Synthesize Skill Wrapper Only"]
         TRIAGE -->|Unbounded / Interactive| REJECT["Mark Unsupported / Agent-Led"]
     end
 
-    subgraph S4["4. Generation & Bounded Multi-Gate Verification"]
-        CSYN --> GEN["Package Generator<br/>(maga.generator)"]
-        SKILL_ONLY --> GATE1
-        GEN --> GATE1["Gate 1: Isolated Contract Validation<br/>(Disposable Modal Sandbox / Local Subprocess)"]
+    subgraph S4["4. Package Assembly & Two-Gate Verification"]
+        TEST_GEN --> PKG["Staged Package<br/>(.maga/artifacts/staged/<id>/)"]
+        SCRIPT_GEN --> PKG
+        SKILL_ONLY --> PKG
         
-        GATE1 -->|Passes Acceptance Checks| GATE2["Gate 2: Fresh-Agent Reuse Test<br/>(Headless agy --print unprompted discovery)"]
+        PKG --> GATE1["Gate 1: Execution Correctness<br/>(Clean Subprocess Worktree, Zero External Network)"]
+        GATE1 -->|All Contract Assertions Pass| GATE2["Gate 2: Autonomous Agent Reuse Test<br/>(Headless agy/claude unprompted discovery <= 2 turns)"]
         
         GATE1 -->|Fails Contract Checks| REV_CHECK{"Shared Revisions<br/>total < 3?"}
         GATE2 -->|Skill Ignored or Failed| REV_CHECK
         
         REV_CHECK -->|Yes: budget remaining| REVISE["Increment Shared Revision Count<br/>Refine Script / Skill (Contract Remains Fixed)"]
-        REVISE --> GEN
+        REVISE --> SCRIPT_GEN
         REV_CHECK -->|No: budget exhausted| UNVERIFIED["Mark UNVERIFIED<br/>Halt: Do NOT Promote to PR"]
     end
 
     subgraph S5["5. Proposal & Publication"]
         GATE2 -->|Skill Discovered & Executed Successfully| PR_BUILDER["Repository Publisher<br/>(maga.publisher)"]
-        PR_BUILDER --> TARGET_PR["Target Monorepo PR<br/>(.agents/skills/ + scripts/ + tests/)"]
-        TARGET_PR --> HUMAN_REV["Human Review & Merge"]
+        PR_BUILDER --> TARGET_PR["Target Monorepo PR<br/>(.agents/skills/ + scripts/ + tests/ + trace proof)"]
+        TARGET_PR --> HUMAN_REV["Human Maintainer Review & Merge"]
     end
 ```
 
@@ -212,16 +223,16 @@ flowchart TD
 
 ## 5. Modular Boundaries & Architecture Components
 
-The system implements the 6 components defined in the architecture specification, using local JSON file storage:
+The system implements the 6 core components defined in the architecture specification, using local JSON file storage:
 
 | Specification Component | Python Module | Responsibility | Primary Inputs | Primary Outputs |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. Transcript reader** | `maga.reader` | Reads selected local transcript files, normalizes entries, redacts sensitive keys/secrets, and tracks watermarks. Never executes commands from transcripts. | Raw `transcript_full.jsonl` | Anonymized `TranscriptEntry` records in `.maga/state/transcript_entries/` |
-| **2. Task finder** | `maga.finder` | Groups related entries into tasks, identifies recurring procedures across tasks, and separates observed facts from inferences. | `TranscriptEntry` records | `ProcedureCandidate` records in `.maga/state/candidates/` |
-| **3. Automation triage** | `maga.triage` | Assesses suitability against repository conventions; dispatches contract synthesis to the open-weight model on Modal via the Pydantic AI Gateway in Logfire. Validates output against Pydantic schema and semantic completeness checks. | Candidates + existing scripts/skills | `AutomationContract` (Pydantic model) in `.maga/state/contracts/` |
-| **4. Package generator** | `maga.generator` | Generates candidate script, skill (`SKILL.md`), and unit tests into an isolated staging directory (`.maga/artifacts/staged/`). Keeps secrets out of code and docs. | Accepted `AutomationContract` | Staged package (`scripts/`, `SKILL.md`, `tests/`) |
-| **5. Verifier** | `maga.verifier` | Evaluates package against contract in disposable sandbox (Gate 1), and tests unprompted discovery by a fresh agent (Gate 2). Enforces a shared revision budget (`MAX_TOTAL_REVISIONS = 3`). Outputs `pass`, `fail`, or `inconclusive`. | Staged package + acceptance checks + clean testbed | `VerificationReport` (`pass`, `fail`, `inconclusive`) in `.maga/state/verification/` |
-| **6. Repository publisher** | `maga.publisher` | Generates proposal branch and human-reviewable PR/MR with read-back verification. A human decides whether to merge. | Verified package + maintainer approval | Git branch & GitHub Pull Request |
+| **1. Transcript reader** | `maga.reader` | Reads Claude Code (`~/.claude/projects/*/*.jsonl`) and Antigravity (`~/.gemini/.../transcript*.jsonl`) transcripts, normalizes steps into unified `Entry` objects, redacts sensitive tokens, and tracks incremental session watermarks. Never executes commands from transcripts. | Raw JSONL session logs | Normalized `Entry` records in `.maga/state/entries/` |
+| **2. Procedure finder** | `maga.finder` | Groups related entries into `Episode` objects, mines recurring command signatures and tool sequences with threshold $\ge 2$ occurrences (or $\ge 3$ repair attempts in one session), applies token normalization (ports, paths, hashes, timestamps), and produces `Candidate` and `Evidence` records. | `Entry` records | `Candidate` and `Evidence` records in `.maga/state/candidates/` |
+| **3. Automation triage** | `maga.triage` | Checks existing repo tools (`package.json`, `justfile`, `Makefile`, `pyproject.toml`, `.agents/skills/`) to avoid duplication. Dispatches contract synthesis to the Modal GPU open-weight model via Pydantic AI Gateway in Logfire. Validates `AutomationContract` schemas. | Candidates + repo tool definitions | `AutomationContract` in `.maga/state/contracts/` |
+| **4. Package generator** | `maga.generator` | Performs two independent generation steps: (1) Contract $\rightarrow$ Test generator (sees only contract, never script), and (2) Contract $\rightarrow$ Script & `SKILL.md` generator. Stages all files in `.maga/artifacts/staged/<candidate_id>/`. | `AutomationContract` | Staged `Package` (`scripts/`, `SKILL.md`, `tests/`) |
+| **5. Verifier** | `maga.verifier` | Evaluates package against contract in clean subprocess (Gate 1), and tests unprompted discovery by a fresh agent session in $\le 2$ turns (Gate 2). Enforces shared revision budget (`MAX_TOTAL_REVISIONS = 3`). Outputs `Verdict`. | Staged `Package` + Acceptance checks | `Verdict` (`pass`, `fail`, `inconclusive`) in `.maga/state/verification/` |
+| **6. Repository publisher** | `maga.publisher` | Generates proposal branch and human-reviewable PR with runtime execution evidence, token delta metrics, and Logfire trace links. A human maintainer makes the final merge decision. | Verified `Package` + `Verdict` | Git branch & GitHub Pull Request |
 
 ---
 
@@ -242,8 +253,8 @@ stateDiagram-v2
     TRIAGED --> CLARIFICATION_REQUESTED: Unknown prerequisites / insufficient evidence
     TRIAGED --> CONTRACTED: Preconditions & acceptance checks formalized (FIXED)
     
-    CONTRACTED --> GENERATING: Package generator creates script, skill, tests
-    GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in sandbox
+    CONTRACTED --> GENERATING: Package generator creates script, skill, tests (independent)
+    GENERATING --> VALIDATING: Verifier runs Gate 1 contract checks in clean subprocess
     
     VALIDATING --> REVISING: Gate 1 failure (total_revisions < 3)
     VALIDATING --> UNVERIFIED: Gate 1 failure (total_revisions >= 3 or inconclusive)
@@ -272,62 +283,113 @@ Per team agreement, SQLite is eliminated from the MVP in favor of structured **l
 .maga/
 ├── state/
 │   ├── import_checkpoints.json              # Ingest watermarks per session
-│   ├── transcript_entries/
-│   │   └── <session_id>.json                # Normalized, sanitized transcript entries
+│   ├── entries/
+│   │   └── <session_id>.json                # Normalized, sanitized Entry records
+│   ├── episodes/
+│   │   └── <session_id>_episodes.json       # Extracted goal-directed Episode sequences
 │   ├── candidates/
-│   │   └── <candidate_id>.json              # Mined procedure candidates and triage status
+│   │   └── <candidate_id>.json              # Mined Candidate & Evidence records
 │   ├── contracts/
 │   │   └── <candidate_id>.json              # Formalized Pydantic AutomationContract
 │   └── verification/
-│       └── <candidate_id>_run_<run_id>.json # Gate 1 & Gate 2 logs and revision count
+│       └── <candidate_id>_verdict.json      # Gate 1 & Gate 2 Verdict and trace data
 └── artifacts/
     └── staged/
-        └── <candidate_id>/                  # Generated package files prior to publication
+        └── <candidate_id>/                  # Generated Package files prior to publication
             ├── SKILL.md
             ├── scripts/
             │   └── start.sh
             └── tests/
-                └── test_start.sh
+                └── test_start.py
 ```
 
-### 7.1 Schema Specifications (Pydantic Models)
+### 7.1 The 7 Core Pydantic Schemas (`maga.schemas`)
 
 ```python
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
+from typing import List, Dict, Any, Optional, Literal
 from datetime import datetime
 
-class TranscriptEntryRecord(BaseModel):
+class Entry(BaseModel):
+    """Normalized single interaction step across Claude Code & Antigravity."""
     entry_id: str
     session_id: str
     step_index: int
-    entry_type: Literal["user_message", "tool_call", "tool_result", "system_message"]
+    source: Literal["user", "model", "system"]
+    entry_type: Literal["user_input", "tool_call", "tool_result", "generic_message"]
     tool_name: Optional[str] = None
     command_line: Optional[str] = None
     working_dir: Optional[str] = None
+    args: Optional[Dict[str, Any]] = None
     exit_code: Optional[int] = None
+    content: Optional[str] = None
     sanitized_output: Optional[str] = None
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
     timestamp: datetime
 
+class Episode(BaseModel):
+    """Extracted sequence of related actions aiming at a specific sub-task or goal."""
+    episode_id: str
+    session_id: str
+    goal: str
+    entries: List[Entry]
+    success: bool
+    repair_iterations: int = 0
+    duration_ms: int = 0
+
+class Evidence(BaseModel):
+    """Empirical observations justifying automation candidate synthesis."""
+    session_ids: List[str]
+    observed_occurrences: int
+    baseline_turns_mean: float
+    baseline_tokens_mean: int
+    failure_traces: List[str] = Field(default_factory=list)
+    common_pitfalls: List[str] = Field(default_factory=list)
+
+class Candidate(BaseModel):
+    """Mined procedure pattern proposed for automation triage."""
+    candidate_id: str
+    title: str
+    command_sequence: List[str]
+    normalized_template: str
+    frequency: int
+    evidence: Evidence
+    triage_status: Literal["pending", "accepted", "rejected", "clarification_needed"] = "pending"
+    rejection_reason: Optional[str] = None
+
 class AutomationContract(BaseModel):
+    """Formal specification governing script implementation and independent test synthesis."""
     candidate_id: str
     workflow_name: str
-    inputs: dict = Field(..., description="Parameters and allowed values")
-    preconditions: List[str] = Field(..., description="Prerequisites before execution")
-    permitted_changes: List[str] = Field(..., description="Bounded filesystem/process effects")
-    postconditions: List[str] = Field(..., description="Required verifiable state upon success")
-    rerun_behaviour: str = Field(..., description="Idempotent handling of existing instances")
-    failure_behaviour: str = Field(..., description="Safe termination, PID cleanup, and error reporting")
-    acceptance_checks: List[str] = Field(..., description="Deterministic verification assertions")
+    intent: str = Field(..., description="High-level goal and human summary")
+    inputs: Dict[str, Any] = Field(..., description="Parameters, defaults, and validation bounds")
+    preconditions: List[str] = Field(..., description="Environmental requirements prior to execution")
+    permitted_changes: List[str] = Field(..., description="Bounded filesystem/process effects allowed")
+    postconditions: List[str] = Field(..., description="Verifiable state upon successful execution")
+    invariants: List[str] = Field(..., description="Strict negative constraints (e.g. do not weaken CORS)")
+    rerun_behaviour: str = Field(..., description="Idempotent handling when already running/configured")
+    failure_behaviour: str = Field(..., description="Safe termination, cleanup traps, and error reporting")
+    acceptance_checks: List[str] = Field(..., description="Deterministic test cases for Gate 1")
 
-class VerificationRunRecord(BaseModel):
-    run_id: str
+class Package(BaseModel):
+    """Staged automation bundle ready for verification and proposal."""
+    candidate_id: str
+    script_path: str
+    skill_path: str
+    test_path: str
+    contract: AutomationContract
+
+class Verdict(BaseModel):
+    """Evaluation outcome for Gate 1 and Gate 2 verification."""
     candidate_id: str
     gate_number: Literal[1, 2]
     outcome: Literal["pass", "fail", "inconclusive"]
     total_revisions: int
+    test_results: Dict[str, Any]
     stdout_log: str
     stderr_log: str
+    token_delta_percent: Optional[float] = None
     execution_duration_ms: int
     timestamp: datetime
 ```
@@ -473,37 +535,33 @@ A key architectural distinction is that **temporary directories and Git worktree
 
 ---
 
-## 12. Minimal Viable End-to-End Implementation Plan (Countdown to 19:00 London)
+## 12. Minimal Viable End-to-End Implementation Plan (Walking Skeleton First)
 
-**Current Time:** 14:25 BST | **Submission Deadline:** 19:00 BST (**~4h 35m remaining**)
+**Submission Deadline:** 19:00 BST
 
 ```text
-14:25 - 14:55  Phase 1: Demonstration Fixture & Authentic Transcript Generation
-               - Build lightweight `fixtures/demo-monorepo` (Vite + Express CORS).
-               - Seed 5173 & 5174 contention; run `agy` 3 times to capture genuine baseline failure traces.
+Phase 1: Schemas & Walking Skeleton Core (15:10 - 15:50)
+- maga/schemas.py: Implement the 7 Pydantic models (Entry, Episode, Candidate, Evidence, AutomationContract, Package, Verdict).
+- Golden Contract: Write the canonical hand-written AutomationContract for the port-aware dev server.
+- maga.generator & maga.verifier: Implement independent test generation and Gate 1 (subprocess) / Gate 2 (agy) runners.
 
-14:55 - 15:40  Phase 2: Core Ingest & Mining Engine (maga.reader, maga.storage, maga.finder)
-               - Parse real JSONL transcripts into `.maga/state/`.
-               - Detect repeated command sequences and tool invocations.
+Phase 2: Demonstration Monorepo Fixture & Baseline Traces (15:50 - 16:30)
+- fixtures/demo-monorepo: Setup Vite + Express CORS workspace with strict ports [5173, 5174].
+- Capture genuine baseline failure traces under port contention and port exhaustion.
 
-15:40 - 16:30  Phase 3: Pydantic Gateway Integration & Contract Synthesis (maga.triage, maga.generator)
-               - Dispatch contract extraction to Modal-hosted model via Pydantic AI Gateway in Logfire.
-               - Record before/after optimization rule token traces for the Pydantic prize.
-               - Synthesize `start.sh`, `SKILL.md`, and contract unit tests.
+Phase 3: Mining Engine & Triage Gateway (16:30 - 17:15)
+- maga.reader: Ingest Claude Code and Antigravity JSONL session logs.
+- maga.finder: Cluster command sequences (threshold >= 2), extract parameters, check existing repo tools.
+- maga.triage: Pydantic AI Gateway in Logfire -> Modal GPU model with optimization rule (token reduction).
 
-16:30 - 17:15  Phase 4: Bounded Two-Gate Verification Engine (maga.verifier)
-               - Gate 1: Run isolated test suite against Vite port scenarios (clean, contention, exhaustion, idempotency).
-               - Gate 2: Run headless `agy --print` to prove unprompted skill discovery.
-               - Enforce shared revision limit (MAX_TOTAL_REVISIONS = 3).
+Phase 4: End-to-End Verification & Evidence Assembly (17:15 - 18:00)
+- Run full MAGA pipeline on captured traces: Discover -> Contract -> Generate -> Gate 1 -> Gate 2.
+- maga.publisher: Generate proposal PR with trace proof, token deltas, and before/after comparisons.
 
-17:15 - 18:00  Phase 5: Proposal PR & Evidence Assembly (maga.publisher)
-               - Generate proposal branch and pull request against the demonstration repository.
-               - Attach execution logs, Logfire trace URLs, and diffs.
+Phase 5: Documentation & 2-Minute Video Demo (18:00 - 18:45)
+- Complete root README.md with clear diagrams, reproduction instructions, and Logfire trace links.
+- Record 2-minute demonstration video highlighting discovery, independent testing, and unprompted agent reuse.
 
-18:00 - 18:45  Phase 6: Comprehensive Documentation & 2-Minute Video Recording
-               - Complete root README with quickstart and architecture diagrams.
-               - Record 2-minute demonstration video highlighting problem, repetition discovery, and agent reuse.
-
-18:45 - 19:00  Phase 7: Submission & Final Verification
-               - Verify all repository links, submission form, and prize opt-ins before 19:00 deadline.
+Phase 6: Submission & Final Polish (18:45 - 19:00)
+- Verify repository clean status, PR links, and submit hackathon entry before 19:00 BST.
 ```
