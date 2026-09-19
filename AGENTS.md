@@ -4,6 +4,64 @@ This document governs coding agent development within the MAGA repository (`ufs-
 
 ---
 
+## 0. This Is a Hackathon: Write Less Code
+
+This repository exists for one demo at a hackathon.
+It is not enterprise code.
+Nobody operates it, extends it, or migrates it after the demo.
+The best code is the code that you do not write.
+
+Do not build these unless a person asks for them by name:
+
+* Configuration systems, plugin systems, registries, or feature flags.
+* An interface with one implementation, a factory for one product, or a base class with one child.
+* Retry layers, caches, connection pools, metrics, or a logging framework.
+* Backwards compatibility, migrations, deprecation paths, or versioned schemas.
+* Scaffolding "for later", CLI options nobody requested, or a wrapper around a library that already fits.
+* CI pipelines, packaging, releases, or Docker images for the product itself.
+
+### The ladder
+
+Understand the task and the code it touches first.
+Then stop at the first rung that holds:
+
+1. **Does this need to exist at all?** A speculative need means skip it, and say so in one line.
+2. **Is it already in this repository?** Reuse the helper, type, or pattern.
+3. **Does the standard library do it?** Use it.
+4. **Does an installed dependency do it?** Use it. Pydantic validates, `pathlib` walks, `subprocess` runs.
+   Never add a dependency for what a few lines can do.
+5. **Can it be one line?** Write one line.
+6. **Only then:** the minimum code that works.
+
+### Rules for small code
+
+* The shortest working diff wins, in the fewest files.
+* Deletion over addition. Boring over clever.
+* A bug fix goes in the shared function, once, at the root cause. It does not go in each caller.
+* Non-trivial logic leaves one small test behind: the smallest check that fails when the logic breaks.
+  A trivial one-liner needs no test.
+* Mark a deliberate shortcut that has a known ceiling with a `ponytail:` comment.
+  Name the ceiling and the upgrade path: `# ponytail: scans every session on each run; add a checkpoint if it gets slow`.
+* After the code, write at most three short lines: what you skipped, and when to add it.
+  If the explanation is longer than the code, delete the explanation.
+
+### Where not to be lazy
+
+Never simplify away these things:
+
+* Secret redaction before a model call, and the rule that transcripts never enter Git.
+* Pydantic validation at each boundary: transcript input, model output, and the `Contract`.
+* A failure that reports itself. Never report a partial result as success.
+* The hard invariants in section 2.
+* Anything a person explicitly requested.
+
+The ladder shortens the solution.
+It never shortens the reading.
+
+This section adapts the `ponytail` skill by Dietrich Gebert (MIT): <https://github.com/DietrichGebert/ponytail>.
+
+---
+
 ## 1. The Four-Beat Workflow
 
 ```text
@@ -28,7 +86,7 @@ This document governs coding agent development within the MAGA repository (`ufs-
 
 ### Beat 3: Prove (`/evidence-driven-testing`)
 * Never make unsupported claims of correctness. Back all pull requests with verifiable runtime logs:
-  - Run the unit test suite: `pytest tests/ -v` (or `uv run pytest`).
+  - Run every gate: `just check`. The pre-push hook runs `just preflight`.
   - Capture **before** evidence (reproducing a failure or unautomated baseline) and **after** evidence (verified execution output).
   - Test edge cases: missing prerequisites, resource contention, exhaustion handling, and idempotent re-runs.
 
@@ -83,15 +141,21 @@ Apply `/unslop` to all human-facing text before committing or posting:
 
 ## 4. Commands & Checks Reference
 
-```bash
-# Run MAGA test suite
-pytest tests/ -v
-# Or with uv
-uv run pytest
+`just` is the only command surface, and the git hooks call the same recipes.
+`CONTRIBUTING.md` has the full rules: hooks, suppressions, commit format, and PR format.
 
-# Check code formatting & types
-ruff check .
-mypy maga/
+```bash
+# Once, on a fresh checkout: tools, locked environment, git hooks
+bash scripts/setup-tools.sh
+
+# Apply lint fixes and format
+just fix
+
+# Lock check, Ruff (all rules), Pyright strict, pytest
+just check
+
+# Everything the pre-push hook runs, on a clean checkout of HEAD
+just preflight
 
 # Verify Antigravity CLI and discovery
 agy --version

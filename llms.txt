@@ -1,0 +1,34 @@
+# MAGA
+
+> MAGA (Mining Agent Generated Automation) is a hackathon demo. A background agent reads coding-agent session transcripts, finds work that agents repeat or get corrected on, and turns a stable procedure into a tested script with a skill that calls it. Python 3.13, Pydantic AI, `uv`, and `just`.
+
+Important notes:
+
+- This is demo code for one hackathon, not enterprise code. `AGENTS.md` section 0 is binding: write the least code that works.
+- `just` is the only command surface. Run `just check` before a commit. The pre-push hook runs `just preflight`.
+- The repository is public. Raw transcripts, credentials, and `.env` files never enter Git.
+- Where two documents disagree, `docs/architecture/ARCHITECTURE.md` decides the design and `AGENTS.md` decides the workflow.
+
+## Start here
+
+- [README](README.md): The problem statement in three sentences, and the two setup commands.
+- [Agent workflow](AGENTS.md): The hackathon code-size rules, the four-beat workflow (isolate, build, prove, ship), the hard security invariants, and the command reference.
+- [Contributing](CONTRIBUTING.md): Setup, the `just` commands, what each git hook runs, the suppression rule, what never enters the repository, and the commit and PR formats.
+
+## Design
+
+- [Architecture](docs/architecture/ARCHITECTURE.md): The five stages (FIND, TRIAGE, BUILD, CHECK, SHIP), the exact mining rules, the candidate state machine and revision budget, the seven Pydantic schemas, the golden contract fixture, the two verification gates, the demo scenarios, and the walking-skeleton build plan.
+
+## Tooling
+
+- [justfile](justfile): Every recipe with a one-line description. `just` with no argument lists them.
+- [pyproject.toml](pyproject.toml): Dependencies, the Ruff rule set with the reason for each ignore, Pyright strict mode, and the pytest settings.
+- [Git hooks](.pre-commit-config.yaml): The pre-commit, commit-msg, and pre-push hooks. Each one calls a `just` recipe.
+- [Setup script](scripts/setup-tools.sh): Installs `uv`, `just`, and `gitleaks` when absent, then the locked environment and the hooks.
+- [PR template](.github/pull_request_template.md): The three required PR headings.
+
+## Optional
+
+- [Idea brief (HTML)](https://from-session-transcripts-to-tested-tools.ledger-rocket.here.now/one-pager.html): The one-page pitch. Older than the architecture document, and it uses different stage names.
+- [Architecture pitch (HTML)](https://from-session-transcripts-to-tested-tools.ledger-rocket.here.now/): The pitch-level architecture page, with plain-language terms and the worked Vite and worktree examples.
+- [ponytail skill](https://github.com/DietrichGebert/ponytail/blob/main/skills/ponytail/SKILL.md): The upstream source of the code-size rules in `AGENTS.md` section 0.
