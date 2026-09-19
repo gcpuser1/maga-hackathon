@@ -1,6 +1,7 @@
 """The Gate 1 harness: the fixtures that generator.CONSTRAINTS promises to the acceptance tests."""
 
 from collections.abc import Callable, Iterator
+import contextlib
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
@@ -11,12 +12,23 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from typing import cast
 
 import pytest
 
 PERMITTED = [5173, 5174]
 HARNESS = Path(__file__).parent
+_EXIT_WAIT_SECONDS = 5
+
+
+def _running(pid: int) -> bool:
+    """A killed process holds its port until it has exited; a zombie has already released it."""
+    stat = Path(f"/proc/{pid}/stat")
+    try:
+        return stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
 
 
 class Backend(HTTPServer):
@@ -36,20 +48,14 @@ class _Health(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Iterator[Path]:
+def repo(tmp_path: Path) -> Path:
     (tmp_path / "packages/config").mkdir(parents=True)
     (tmp_path / "packages/config/ports.json").write_text(json.dumps({"frontend_ports": PERMITTED}))
     (tmp_path / "apps/web").mkdir(parents=True)
     (tmp_path / "apps/api/src").mkdir(parents=True)
     origins = [f"http://localhost:{port}" for port in PERMITTED]
     (tmp_path / "apps/api/src/server.js").write_text(f"const allowed = {json.dumps(origins)};\n")
-    yield tmp_path
-    pid_file = tmp_path / "apps/web/.vite.pid"
-    if pid_file.exists():  # hygiene: stop only what the script under test recorded
-        try:
-            os.kill(int(pid_file.read_text().split()[0]), signal.SIGKILL)
-        except (ValueError, IndexError, ProcessLookupError):
-            return
+    return tmp_path
 
 
 @pytest.fixture
@@ -81,8 +87,16 @@ def occupy() -> Iterator[Callable[[int], socket.socket]]:
 
 
 @pytest.fixture
-def run(repo: Path) -> Callable[..., subprocess.CompletedProcess[str]]:
-    env = {**os.environ, "PATH": f"{HARNESS}{os.pathsep}{os.environ['PATH']}"}
+def run(
+    repo: Path, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[Callable[..., subprocess.CompletedProcess[str]]]:
+    # The vite stand-in writes its PID here, so cleanup never depends on the script under test.
+    registry = tmp_path_factory.mktemp("harness") / "vite_pids"
+    env = {
+        **os.environ,
+        "PATH": f"{HARNESS}{os.pathsep}{os.environ['PATH']}",
+        "MAGA_VITE_PIDS": str(registry),
+    }
 
     def _run(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -95,4 +109,11 @@ def run(repo: Path) -> Callable[..., subprocess.CompletedProcess[str]]:
             check=False,
         )
 
-    return _run
+    yield _run
+    pids = [int(pid) for pid in registry.read_text().split()] if registry.exists() else []
+    for pid in pids:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    deadline = time.monotonic() + _EXIT_WAIT_SECONDS
+    while any(_running(pid) for pid in pids) and time.monotonic() < deadline:
+        time.sleep(0.01)  # a bounded wait for the exit, which frees the port for the next test

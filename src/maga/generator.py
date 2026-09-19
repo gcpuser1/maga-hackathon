@@ -29,6 +29,10 @@ Test harness (pytest fixtures that Gate 1 provides; a test must not define them)
 - `repo`: Path of a fresh repository root with the files above.
 - `backend`: the backend stub on http://localhost:4000. `backend.origins` lists each Origin
   header that `/api/health` received. It answers 200 for a permitted Origin and 403 otherwise.
+  The backend runs only inside a test that requests this fixture, so each test that starts the
+  workflow must request `backend`. Set `backend.allowed = []` to make it reject every Origin.
+- Each test gets a fresh `repo`, and the harness stops the process in the PID tracking file
+  after each test. Ports 5173 and 5174 are free at the start of each test.
 - `occupy(port)`: binds the port with an unrelated listener and returns its socket.
 - `run(*args)`: runs the script under test in `repo` and returns subprocess.CompletedProcess
   with text stdout and stderr. Never import the script and never read its source.

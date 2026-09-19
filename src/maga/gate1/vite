@@ -4,6 +4,7 @@
 With --strictPort it exits 1 on a busy port. Without it, it moves to the next port, as Vite does.
 """
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 import sys
 
 
@@ -27,5 +28,8 @@ while True:
         if "--strictPort" in args:
             sys.exit(f"Error: Port {port} is already in use")
         port += 1
+if os.environ.get("MAGA_VITE_PIDS"):  # the harness stops exactly these after each test
+    with open(os.environ["MAGA_VITE_PIDS"], "a") as registry:
+        registry.write(f"{os.getpid()}\n")
 print(f"  Local: http://localhost:{port}/", flush=True)
 server.serve_forever()
