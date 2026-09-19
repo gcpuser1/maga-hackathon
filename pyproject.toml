@@ -49,6 +49,10 @@ unfixable = ["PL", "N"]
     "S603",     # Gate 2 runs `claude -p` with a fixed argument list; the task text is a constant
     "S607",     # `claude` comes from PATH
 ]
+"src/maga/publisher.py" = [
+    "S603",     # PROPOSE runs `git` with an argument list; no shell
+    "S607",     # `git` comes from PATH
+]
 "src/maga/verifier.py" = [
     "S603",     # Gate 1 runs `docker` with a fixed argument list; no shell, no transcript text
     "S607",     # `docker` comes from PATH, as on any developer machine
