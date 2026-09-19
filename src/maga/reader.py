@@ -25,6 +25,7 @@ _SECRETS = [
 _EXIT_CODE = re.compile(r"Exit code (\d+)")
 _HEAD, _TAIL = 600, 400
 _ENTRIES = TypeAdapter(list[Entry])
+_CHECKPOINTS = TypeAdapter(dict[str, list[int]])
 
 
 class _Message(BaseModel):
@@ -163,21 +164,40 @@ def parse_session(path: Path) -> tuple[list[Entry], int]:
 
 
 def read(paths: Iterable[Path], state: Path) -> dict[str, int]:
-    """Store the new entries of each session under `state`/entries and report the counts."""
-    # ponytail: parses every file on each run and dedups by entry_id; add the
-    # import_checkpoints.json watermark of ARCHITECTURE.md 7 if this gets slow.
-    report = {"files": 0, "new_entries": 0, "malformed_lines": 0}
+    """Store the entries of each session under `state`/entries and report the counts.
+
+    `import_checkpoints.json` holds the size, the modification time, and the malformed-line
+    count of each imported file, so an unchanged file is not parsed again.
+    """
+    report = {"files": 0, "unchanged_files": 0, "new_entries": 0, "malformed_lines": 0}
     (state / "entries").mkdir(parents=True, exist_ok=True)
-    for path in paths:
-        entries, malformed = parse_session(path)
-        report["files"] += 1
-        report["malformed_lines"] += malformed
-        for session_id in {entry.session_id for entry in entries}:
-            target = state / "entries" / f"{session_id}.json"
-            stored = _ENTRIES.validate_json(target.read_bytes()) if target.exists() else []
-            known = {entry.entry_id for entry in stored}
-            new = [e for e in entries if e.session_id == session_id and e.entry_id not in known]
-            if new:
-                target.write_bytes(_ENTRIES.dump_json(stored + new))
-                report["new_entries"] += len(new)
+    checkpoint_file = state / "import_checkpoints.json"
+    checkpoints = (
+        _CHECKPOINTS.validate_json(checkpoint_file.read_bytes())
+        if checkpoint_file.exists()
+        else {}
+    )
+    try:
+        for path in paths:
+            report["files"] += 1
+            stat = path.stat()
+            seen = checkpoints.get(str(path))
+            if seen and seen[:2] == [stat.st_size, stat.st_mtime_ns]:
+                report["unchanged_files"] += 1
+                report["malformed_lines"] += seen[2]  # still reported, never silent
+                continue
+            entries, malformed = parse_session(path)
+            report["malformed_lines"] += malformed
+            for session_id in {entry.session_id for entry in entries}:
+                target = state / "entries" / f"{session_id}.json"
+                stored = _ENTRIES.validate_json(target.read_bytes()) if target.exists() else []
+                known = {entry.entry_id: entry for entry in stored}
+                # A re-read entry replaces the stored one, so a call gets a result that came later.
+                merged = known | {e.entry_id: e for e in entries if e.session_id == session_id}
+                target.write_bytes(_ENTRIES.dump_json(list(merged.values())))
+                report["new_entries"] += len(merged) - len(known)
+            # Only now: a checkpoint before its entries would hide a failed write for ever.
+            checkpoints[str(path)] = [stat.st_size, stat.st_mtime_ns, malformed]
+    finally:
+        checkpoint_file.write_bytes(_CHECKPOINTS.dump_json(checkpoints))
     return report

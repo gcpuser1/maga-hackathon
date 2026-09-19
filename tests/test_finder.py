@@ -289,3 +289,21 @@ def test_cor_003_the_model_judges_a_correction_once_and_never_a_repetition() -> 
     asked.clear()
     find(sessions[:2], confirm)
     assert asked == []
+
+
+def test_chk_006_the_evidence_that_goes_to_the_model_does_not_grow_with_the_sessions() -> None:
+    asked: list[list[str]] = []
+
+    def confirm(_command: str, messages: list[str]) -> bool:
+        asked.append(messages)
+        return True
+
+    sessions = [
+        _session(f"sess-u{n:02d}", ("kill -9 4242", 0), f"don't kill process number {n:02d}")
+        for n in range(25)
+    ]
+    (candidate,) = find(sessions, confirm)
+    assert candidate.frequency == 25
+    assert len(candidate.evidence.common_pitfalls) == 10
+    assert [len(messages) for messages in asked] == [10]
+    assert len(candidate.model_dump_json()) < 5000
